@@ -406,33 +406,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  navAdminBtn.addEventListener('click', triggerAdminAccess);
+  if (navAdminBtn) {
+    navAdminBtn.addEventListener('click', triggerAdminAccess);
+  }
 
   // Admin login submission (Passcode validated strictly on server)
-  adminLoginForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    loginErrorMsg.classList.add('hidden');
+  if (adminLoginForm) {
+    adminLoginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (loginErrorMsg) loginErrorMsg.classList.add('hidden');
 
-    const passcode = adminPasscode.value.trim();
-    if (!passcode) return;
+      const passcode = adminPasscode ? adminPasscode.value.trim() : '';
+      if (!passcode) return;
 
-    const res = await adminController.login(passcode);
-    if (res.success) {
-      adminPasscode.value = '';
-      closeModal(adminLoginModal);
-      openAdminDashboard();
-      showToast('Admin authenticated successfully', 'success');
-    } else {
-      loginErrorMsg.textContent = res.error || 'Incorrect passcode';
-      loginErrorMsg.classList.remove('hidden');
-    }
-  });
+      const res = await adminController.login(passcode);
+      if (res.success) {
+        if (adminPasscode) adminPasscode.value = '';
+        if (adminLoginModal) closeModal(adminLoginModal);
+        openAdminDashboard();
+        showToast('Admin authenticated successfully', 'success');
+      } else if (loginErrorMsg) {
+        loginErrorMsg.textContent = res.error || 'Incorrect passcode';
+        loginErrorMsg.classList.remove('hidden');
+      }
+    });
+  }
 
-  adminLogoutBtn.addEventListener('click', async () => {
-    await adminController.logout();
-    closeModal(adminDashboardModal);
-    showToast('Admin logged out', 'success');
-  });
+  if (adminLogoutBtn) {
+    adminLogoutBtn.addEventListener('click', async () => {
+      await adminController.logout();
+      if (adminDashboardModal) closeModal(adminDashboardModal);
+      showToast('Admin logged out', 'success');
+    });
+  }
 
   async function openAdminDashboard() {
     openModal(adminDashboardModal);
@@ -597,11 +603,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // MODAL & TOAST HELPERS
   // -------------------------------------------------------------
   function openModal(modal) {
-    modal.classList.add('active');
+    if (modal) modal.classList.add('active');
   }
 
   function closeModal(modal) {
-    modal.classList.remove('active');
+    if (modal) modal.classList.remove('active');
   }
 
   document.querySelectorAll('[data-close-modal]').forEach(btn => {
