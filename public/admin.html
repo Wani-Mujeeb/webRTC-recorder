@@ -93,26 +93,7 @@
           <p>No recorded calls found on server.</p>
         </div>
 
-        <!-- Sleek Audio Player Box -->
-        <div id="admin-audio-player-card" class="admin-player-box hidden">
-          <div class="player-header-bar">
-            <div class="player-info-group">
-              <span class="player-live-badge">NOW PLAYING</span>
-              <strong id="player-title">Selected Recording</strong>
-              <div id="player-subtext" class="player-subtext">Stereo Uncompressed PCM WAV (44.1kHz / 16-bit)</div>
-            </div>
-            
-            <div class="channel-selector-group">
-              <button class="ch-btn active" data-ch="0">Stereo Both</button>
-              <button class="ch-btn" data-ch="1">Ch 1 (Host)</button>
-              <button class="ch-btn" data-ch="2">Ch 2 (Guest)</button>
-            </div>
-          </div>
-          
-          <div class="player-controls-row">
-            <audio id="admin-audio-element" controls style="width:100%; border-radius:10px;"></audio>
-          </div>
-        </div>
+        <!-- Inline audio player is generated dynamically beneath each recording item -->
 
       </div>
     </section>
