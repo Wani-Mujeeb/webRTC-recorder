@@ -1212,20 +1212,30 @@ button, input, select, textarea {
   background: rgba(244, 63, 94, 0.3);
 }
 
+/* Global Hidden Utility */
+.hidden {
+  display: none !important;
+}
+
+.custom-play-btn svg.hidden,
+.custom-vol-btn svg.hidden {
+  display: none !important;
+}
+
 /* ==========================================================================
-   CUSTOM PLAYBACK CONTROL BAR SYSTEM (CallWave Neon Glassmorphism)
+   CUSTOM PLAYBACK CONTROL BAR SYSTEM (Elegant Toned-Down Glassmorphism)
    ========================================================================== */
 .custom-player-bar {
   display: flex;
   align-items: center;
   gap: 1rem;
-  background: rgba(15, 23, 42, 0.85);
+  background: rgba(15, 23, 42, 0.75);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-md);
-  padding: 0.75rem 1.25rem;
-  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.15);
+  padding: 0.65rem 1.1rem;
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.4);
   margin-top: 0.75rem;
   flex-wrap: wrap;
 }
@@ -1235,22 +1245,22 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  background: #4f46e5;
   color: #ffffff;
   border: none;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, background 0.2s ease;
+  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.3);
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   flex-shrink: 0;
 }
 
 .custom-play-btn:hover {
-  transform: scale(1.08);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
-  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+  transform: scale(1.06);
+  background: #6366f1;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
 }
 
 .custom-play-btn:active {
@@ -1258,18 +1268,18 @@ button, input, select, textarea {
 }
 
 .custom-play-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   fill: currentColor;
 }
 
 /* Time Display */
 .player-time-display {
   font-family: 'Outfit', sans-serif;
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.82rem;
+  font-weight: 500;
   color: var(--text-muted);
-  min-width: 95px;
+  min-width: 90px;
   text-align: center;
   user-select: none;
   letter-spacing: 0.02em;
@@ -1278,7 +1288,7 @@ button, input, select, textarea {
 
 .player-time-display .current-time {
   color: var(--text-main);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* Progress Seeker Bar Wrapper */
@@ -1288,16 +1298,16 @@ button, input, select, textarea {
   min-width: 160px;
   display: flex;
   align-items: center;
-  height: 24px;
+  height: 20px;
 }
 
 .progress-track-bg {
   position: absolute;
   left: 0;
   right: 0;
-  height: 6px;
+  height: 5px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   pointer-events: none;
   overflow: hidden;
 }
@@ -1307,7 +1317,7 @@ button, input, select, textarea {
   left: 0;
   height: 100%;
   width: 0%;
-  background: rgba(99, 102, 241, 0.25);
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 3px;
   transition: width 0.2s ease;
 }
@@ -1317,9 +1327,9 @@ button, input, select, textarea {
   left: 0;
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #6366f1 0%, #10b981 100%);
+  background: linear-gradient(90deg, #4f46e5 0%, #6366f1 100%);
   border-radius: 3px;
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+  box-shadow: 0 1px 6px rgba(99, 102, 241, 0.25);
   pointer-events: none;
 }
 
@@ -1327,7 +1337,7 @@ button, input, select, textarea {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 24px;
+  height: 20px;
   background: transparent;
   outline: none;
   cursor: pointer;
@@ -1339,28 +1349,28 @@ button, input, select, textarea {
 .custom-seek-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background: #ffffff;
-  border: 2.5px solid #6366f1;
-  box-shadow: 0 0 12px rgba(99, 102, 241, 0.9);
+  border: 2px solid #6366f1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .custom-seek-input::-webkit-slider-thumb:hover {
-  transform: scale(1.3);
-  box-shadow: 0 0 16px rgba(99, 102, 241, 1);
+  transform: scale(1.25);
+  background: #f8fafc;
 }
 
 .custom-seek-input::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background: #ffffff;
-  border: 2.5px solid #6366f1;
-  box-shadow: 0 0 12px rgba(99, 102, 241, 0.9);
+  border: 2px solid #6366f1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
 
@@ -1392,10 +1402,10 @@ button, input, select, textarea {
 .custom-vol-input {
   -webkit-appearance: none;
   appearance: none;
-  width: 70px;
+  width: 65px;
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.12);
   outline: none;
   cursor: pointer;
 }
@@ -1403,19 +1413,18 @@ button, input, select, textarea {
 .custom-vol-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: #818cf8;
-  box-shadow: 0 0 8px rgba(129, 140, 248, 0.6);
+  background: #a5b4fc;
   cursor: pointer;
 }
 
 .custom-vol-input::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: #818cf8;
+  background: #a5b4fc;
   cursor: pointer;
 }
 
@@ -1439,5 +1448,6 @@ audio {
 .empty-state.hidden {
   display: none !important;
 }
+
 
 

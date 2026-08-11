@@ -509,6 +509,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isUserSeeking = false;
 
+    function setPlayState(isPlaying) {
+      if (isPlaying) {
+        if (iconPlay) { iconPlay.classList.add('hidden'); iconPlay.style.display = 'none'; }
+        if (iconPause) { iconPause.classList.remove('hidden'); iconPause.style.display = 'block'; }
+      } else {
+        if (iconPlay) { iconPlay.classList.remove('hidden'); iconPlay.style.display = 'block'; }
+        if (iconPause) { iconPause.classList.add('hidden'); iconPause.style.display = 'none'; }
+      }
+    }
+
+    function setMuteState(isMuted) {
+      if (isMuted) {
+        if (iconVolOn) { iconVolOn.classList.add('hidden'); iconVolOn.style.display = 'none'; }
+        if (iconVolOff) { iconVolOff.classList.remove('hidden'); iconVolOff.style.display = 'block'; }
+      } else {
+        if (iconVolOn) { iconVolOn.classList.remove('hidden'); iconVolOn.style.display = 'block'; }
+        if (iconVolOff) { iconVolOff.classList.add('hidden'); iconVolOff.style.display = 'none'; }
+      }
+    }
+
+    // Initialize default icon states
+    setPlayState(false);
+    setMuteState(false);
+
     function updateDurationDisplay() {
       const dur = (audioEl.duration && !isNaN(audioEl.duration) && isFinite(audioEl.duration) && audioEl.duration > 0)
         ? audioEl.duration
@@ -520,19 +544,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Playback state updates
-    audioEl.addEventListener('play', () => {
-      if (iconPlay) iconPlay.classList.add('hidden');
-      if (iconPause) iconPause.classList.remove('hidden');
-    });
-
-    audioEl.addEventListener('pause', () => {
-      if (iconPlay) iconPlay.classList.remove('hidden');
-      if (iconPause) iconPause.classList.add('hidden');
-    });
+    audioEl.addEventListener('play', () => { setPlayState(true); });
+    audioEl.addEventListener('pause', () => { setPlayState(false); });
 
     audioEl.addEventListener('ended', () => {
-      if (iconPlay) iconPlay.classList.remove('hidden');
-      if (iconPause) iconPause.classList.add('hidden');
+      setPlayState(false);
       if (seekInput) seekInput.value = 0;
       if (activeFill) activeFill.style.width = '0%';
       if (curTimeEl) curTimeEl.textContent = '00:00';
@@ -602,25 +618,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const vol = parseFloat(volInput.value);
       audioEl.volume = vol;
       audioEl.muted = (vol === 0);
-      if (audioEl.muted) {
-        if (iconVolOn) iconVolOn.classList.add('hidden');
-        if (iconVolOff) iconVolOff.classList.remove('hidden');
-      } else {
-        if (iconVolOn) iconVolOn.classList.remove('hidden');
-        if (iconVolOff) iconVolOff.classList.add('hidden');
-      }
+      setMuteState(audioEl.muted);
     });
 
     volBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       audioEl.muted = !audioEl.muted;
+      setMuteState(audioEl.muted);
       if (audioEl.muted) {
-        if (iconVolOn) iconVolOn.classList.add('hidden');
-        if (iconVolOff) iconVolOff.classList.remove('hidden');
         volInput.value = 0;
       } else {
-        if (iconVolOn) iconVolOn.classList.remove('hidden');
-        if (iconVolOff) iconVolOff.classList.add('hidden');
         volInput.value = audioEl.volume > 0 ? audioEl.volume : 1;
         audioEl.volume = parseFloat(volInput.value);
       }
