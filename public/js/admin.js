@@ -269,11 +269,13 @@ document.addEventListener('DOMContentLoaded', () => {
       recordingsTableBody.innerHTML = '';
 
       if (recordings.length === 0) {
+        emptyState.style.display = 'block';
         emptyState.classList.remove('hidden');
         recordingsTableBody.parentElement.classList.add('hidden');
         return;
       }
 
+      emptyState.style.display = 'none';
       emptyState.classList.add('hidden');
       recordingsTableBody.parentElement.classList.remove('hidden');
 
@@ -469,6 +471,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       audioEl.src = mediaUrl;
+      audioEl.load();
       audioEl.play().catch(err => console.error('[Inline Audio Play Error]', err));
     }
   }

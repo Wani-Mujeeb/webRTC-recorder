@@ -1177,3 +1177,24 @@ button, input, select, textarea {
   background: rgba(244, 63, 94, 0.3);
 }
 
+/* Audio Player Dark Theme Fix */
+audio {
+  color-scheme: dark;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: #0f172a;
+  outline: none;
+}
+
+.inline-admin-player audio {
+  color-scheme: dark;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: #1e293b;
+  outline: none;
+}
+
+.empty-state.hidden {
+  display: none !important;
+}
+

@@ -311,7 +311,7 @@ app.get('/api/admin/recordings', requireAdminAuth, (req, res) => {
   res.json({ success: true, recordings });
 });
 
-// Download/Stream raw stereo WAV file (Protected)
+// Download/Stream raw stereo WAV file (Protected - Range 206 Streaming)
 app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
   const { id } = req.params;
   const recordings = getRecordingsMetadata();
@@ -327,14 +327,41 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
   }
 
   const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
   const isDownload = req.query.dl === '1' || req.query.download === '1';
   const dispositionType = isDownload ? 'attachment' : 'inline';
 
-  res.setHeader('Content-Type', 'audio/wav');
-  res.setHeader('Content-Length', stat.size);
-  res.setHeader('Content-Disposition', `${dispositionType}; filename="${rec.filename}"`);
-  
-  fs.createReadStream(filePath).pipe(res);
+  if (range && !isDownload) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+    if (start >= fileSize || end >= fileSize) {
+      res.setHeader('Content-Range', `bytes */${fileSize}`);
+      return res.status(416).send('Requested Range Not Satisfiable');
+    }
+
+    const chunkSize = (end - start) + 1;
+    const fileStream = fs.createReadStream(filePath, { start, end });
+
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': 'audio/wav',
+      'Content-Disposition': `${dispositionType}; filename="${rec.filename}"`
+    });
+    fileStream.pipe(res);
+  } else {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': 'audio/wav',
+      'Accept-Ranges': 'bytes',
+      'Content-Disposition': `${dispositionType}; filename="${rec.filename}"`
+    });
+    fs.createReadStream(filePath).pipe(res);
+  }
 });
 
 // Download mono channel WAV file (Channel 1=Left / Channel 2=Right) (Streamed Memory-Efficient) (Protected)
