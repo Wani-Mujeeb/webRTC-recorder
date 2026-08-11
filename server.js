@@ -329,6 +329,8 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
   const stat = fs.statSync(filePath);
   const fileSize = stat.size;
   const range = req.headers.range;
+  const isDownload = req.query.dl === '1' || req.query.download === '1';
+  const dispositionType = isDownload ? 'attachment' : 'inline';
 
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
@@ -341,6 +343,7 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
       'Accept-Ranges': 'bytes',
       'Content-Length': chunkSize,
       'Content-Type': 'audio/wav',
+      'Content-Disposition': `${dispositionType}; filename="${rec.filename}"`
     };
     res.writeHead(206, head);
     file.pipe(res);
@@ -349,7 +352,7 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
       'Content-Length': fileSize,
       'Content-Type': 'audio/wav',
       'Accept-Ranges': 'bytes',
-      'Content-Disposition': `inline; filename="${rec.filename}"`
+      'Content-Disposition': `${dispositionType}; filename="${rec.filename}"`
     };
     res.writeHead(200, head);
     fs.createReadStream(filePath).pipe(res);
@@ -446,8 +449,11 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
     const channelName = targetChannel === 1 ? 'Host-Left' : 'Guest-Right';
     const downloadFilename = rec.filename.replace('.wav', `-${channelName}.wav`);
 
+    const isDownload = req.query.dl === '1' || req.query.download === '1';
+    const dispositionType = isDownload ? 'attachment' : 'inline';
+
     res.setHeader('Content-Type', 'audio/wav');
-    res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename}"`);
+    res.setHeader('Content-Disposition', `${dispositionType}; filename="${downloadFilename}"`);
 
     // Stream mono header and transformed PCM stream memory-efficiently
     res.write(monoWavHeader);
