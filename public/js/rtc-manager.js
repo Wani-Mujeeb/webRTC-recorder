@@ -30,6 +30,7 @@ class RTCManager {
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' },
+        { urls: 'stun:stun.services.mozilla.com:3478' },
         { urls: 'stun:global.stun.twilio.com:3478' }
       ]
     };
@@ -61,7 +62,7 @@ class RTCManager {
     // 2. Connect to Socket.IO (auto-detect server URL if opened via file://)
     const serverUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : undefined;
     if (typeof io === 'undefined') {
-      throw new Error('Socket.IO client library not loaded. Please open http://localhost:3000 in your browser.');
+      throw new Error('Socket.IO client library not loaded. Please open your app URL in browser.');
     }
     this.socket = serverUrl ? io(serverUrl) : io();
 
@@ -75,12 +76,13 @@ class RTCManager {
       });
     });
 
+    // When another user joins the room after us
     this.socket.on('user-connected', async ({ socketId, username, isHost }) => {
       console.log(`[RTC] User connected: ${username} (${socketId})`);
       this.targetSocketId = socketId;
       if (this.onUserJoined) this.onUserJoined({ socketId, username, isHost });
 
-      // Host initiates the WebRTC offer when a guest connects
+      // Host (or first peer) initiates the WebRTC offer when a second user connects
       if (this.isHost) {
         await this._createPeerConnection(socketId);
         const offer = await this.peerConnection.createOffer({
@@ -93,6 +95,30 @@ class RTCManager {
           offer: offer,
           callerName: this.username
         });
+      }
+    });
+
+    // When joining a room that already has active users
+    this.socket.on('room-users', async (existingUsers) => {
+      console.log(`[RTC] Existing room users received:`, existingUsers);
+      if (existingUsers && existingUsers.length > 0) {
+        const peer = existingUsers[0];
+        this.targetSocketId = peer.socketId;
+        if (this.onUserJoined) this.onUserJoined(peer);
+
+        // If I am host or peer is host, initiate offer to connect
+        if (!this.peerConnection) {
+          await this._createPeerConnection(peer.socketId);
+          if (this.isHost) {
+            const offer = await this.peerConnection.createOffer({ offerToReceiveAudio: true });
+            await this.peerConnection.setLocalDescription(offer);
+            this.socket.emit('signal-offer', {
+              targetSocketId: peer.socketId,
+              offer: offer,
+              callerName: this.username
+            });
+          }
+        }
       }
     });
 
@@ -122,8 +148,8 @@ class RTCManager {
     });
 
     this.socket.on('signal-ice-candidate', async ({ senderSocketId, candidate }) => {
-      if (this.peerConnection && candidate) {
-        if (this.peerConnection.remoteDescription && this.peerConnection.remoteDescription.type) {
+      if (candidate) {
+        if (this.peerConnection && this.peerConnection.remoteDescription && this.peerConnection.remoteDescription.type) {
           try {
             await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (err) {
@@ -187,10 +213,14 @@ class RTCManager {
       console.log('[RTC] Remote track received:', event.track.kind);
       if (event.streams && event.streams[0]) {
         event.streams[0].getTracks().forEach(track => {
-          this.remoteStream.addTrack(track);
+          if (!this.remoteStream.getTracks().some(t => t.id === track.id)) {
+            this.remoteStream.addTrack(track);
+          }
         });
       } else {
-        this.remoteStream.addTrack(event.track);
+        if (!this.remoteStream.getTracks().some(t => t.id === event.track.id)) {
+          this.remoteStream.addTrack(event.track);
+        }
       }
 
       if (this.onRemoteStreamAdded) {
@@ -200,7 +230,7 @@ class RTCManager {
 
     // Send ICE candidates to signaling server
     this.peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && this.socket) {
         this.socket.emit('signal-ice-candidate', {
           targetSocketId: targetSocketId,
           candidate: event.candidate
@@ -208,11 +238,28 @@ class RTCManager {
       }
     };
 
-    // Connection state monitor
+    // Connection state monitor & auto-reconnect recovery
     this.peerConnection.onconnectionstatechange = () => {
-      console.log('[RTC] Connection State:', this.peerConnection.connectionState);
-      if (this.onConnectionStateChange) {
-        this.onConnectionStateChange(this.peerConnection.connectionState);
+      console.log('[RTC] Connection State:', this.peerConnection ? this.peerConnection.connectionState : 'closed');
+      if (this.peerConnection) {
+        const state = this.peerConnection.connectionState;
+        if (state === 'failed') {
+          console.warn('[RTC] Connection failed. Restarting ICE...');
+          this.peerConnection.restartIce();
+        }
+        if (this.onConnectionStateChange) {
+          this.onConnectionStateChange(state);
+        }
+      }
+    };
+
+    this.peerConnection.oniceconnectionstatechange = () => {
+      if (this.peerConnection) {
+        console.log('[RTC] ICE Connection State:', this.peerConnection.iceConnectionState);
+        if (this.peerConnection.iceConnectionState === 'failed') {
+          console.warn('[RTC] ICE failed. Restarting ICE candidates...');
+          this.peerConnection.restartIce();
+        }
       }
     };
   }
@@ -257,6 +304,7 @@ class RTCManager {
       this.peerConnection.onicecandidate = null;
       this.peerConnection.ontrack = null;
       this.peerConnection.onconnectionstatechange = null;
+      this.peerConnection.oniceconnectionstatechange = null;
       this.peerConnection.close();
       this.peerConnection = null;
     }

@@ -119,12 +119,15 @@ const upload = multer({
   storage: storage,
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max limit
   fileFilter: (req, file, cb) => {
-    const validMimeTypes = ['audio/wav', 'audio/wave', 'audio/x-wav', 'audio/x-pn-wav'];
-    const isWavExt = file.originalname && file.originalname.toLowerCase().endsWith('.wav');
+    const validMimeTypes = [
+      'audio/wav', 'audio/wave', 'audio/x-wav', 'audio/x-pn-wav',
+      'audio/vnd.wave', 'application/octet-stream', 'audio/pcm', 'audio/raw', ''
+    ];
+    const isWavExt = !file.originalname || file.originalname.toLowerCase().endsWith('.wav');
     if (validMimeTypes.includes(file.mimetype) || isWavExt) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file format. Only uncompressed WAV audio files are allowed.'));
+      cb(new Error('Invalid file format. Only audio WAV files are allowed.'));
     }
   }
 });

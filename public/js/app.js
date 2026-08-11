@@ -105,10 +105,30 @@ document.addEventListener('DOMContentLoaded', () => {
       rtcManager = new window.RTCManager({
         onRemoteStreamAdded: (remoteStream) => {
           console.log('[App] Remote stream received, attaching audio element & visualizer...');
-          const remoteAudioEl = document.getElementById('remote-audio-element');
-          if (remoteAudioEl) {
-            remoteAudioEl.srcObject = remoteStream;
-            remoteAudioEl.play().catch(e => console.error('[App] Play remote audio error:', e));
+          let remoteAudioEl = document.getElementById('remote-audio-element');
+          if (!remoteAudioEl) {
+            remoteAudioEl = document.createElement('audio');
+            remoteAudioEl.id = 'remote-audio-element';
+            remoteAudioEl.autoplay = true;
+            remoteAudioEl.playsInline = true;
+            document.body.appendChild(remoteAudioEl);
+          }
+          remoteAudioEl.srcObject = remoteStream;
+          remoteAudioEl.muted = false;
+          remoteAudioEl.volume = 1.0;
+
+          const playPromise = remoteAudioEl.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(err => {
+              console.warn('[App] Remote audio play deferred for user interaction:', err);
+              const unlockAudio = () => {
+                remoteAudioEl.play().catch(e => console.error('Play error on unlock:', e));
+                document.removeEventListener('click', unlockAudio);
+                document.removeEventListener('touchstart', unlockAudio);
+              };
+              document.addEventListener('click', unlockAudio);
+              document.addEventListener('touchstart', unlockAudio);
+            });
           }
 
           setupVisualizers(rtcManager.localStream, remoteStream);
@@ -218,16 +238,24 @@ document.addEventListener('DOMContentLoaded', () => {
           method: 'POST',
           body: formData
         });
-        const resJson = await response.json();
 
-        if (resJson.success) {
+        const rawText = await response.text();
+        let resJson;
+        try {
+          resJson = JSON.parse(rawText);
+        } catch (e) {
+          console.error('[Upload Response Error] Received non-JSON response from server:', rawText);
+          throw new Error('Upload size exceeded server limit or proxy error.');
+        }
+
+        if (response.ok && resJson.success) {
           showToast('Call recording saved securely on server!', 'success');
         } else {
-          showToast('Failed to save recording on server', 'error');
+          showToast(resJson.message || 'Failed to save recording on server', 'error');
         }
       } catch (err) {
         console.error('Error uploading recording:', err);
-        showToast('Error uploading audio recording', 'error');
+        showToast(err.message || 'Error uploading audio recording', 'error');
       }
     }
 
