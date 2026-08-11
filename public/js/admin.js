@@ -437,24 +437,30 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function playInlineRecording(recId, channel = 0) {
-    // 1. Pause and hide ALL player drawers across the whole page
+    const targetDrawer = document.getElementById(`player-drawer-${recId}`);
+    const isTargetAlreadyOpen = targetDrawer && !targetDrawer.classList.contains('hidden') && channel === 0;
+
+    // 1. Pause and hide ALL player drawers across the entire page
     document.querySelectorAll('.player-drawer-row').forEach(row => {
-      if (row.id !== `player-drawer-${recId}`) {
-        row.classList.add('hidden');
-        const audio = row.querySelector('audio');
-        if (audio) {
-          audio.pause();
-        }
+      row.classList.add('hidden');
+      const audio = row.querySelector('audio');
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
       }
     });
 
-    // 2. Open ONLY the selected recording's player drawer
-    const drawerRow = document.getElementById(`player-drawer-${recId}`);
-    if (drawerRow) {
-      drawerRow.classList.remove('hidden');
+    // 2. Toggle behavior: If user clicked Listen/Play on an already active stereo player, close it
+    if (isTargetAlreadyOpen) {
+      return;
     }
 
-    // 3. Instant Native HTTP Range Audio Streaming (10ms start for Stereo and Channels)
+    // 3. Open ONLY the selected recording's player drawer
+    if (targetDrawer) {
+      targetDrawer.classList.remove('hidden');
+    }
+
+    // 4. Instant high-performance audio streaming
     const audioEl = document.getElementById(`audio-player-${recId}`);
     if (audioEl) {
       let mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/file?token=${encodeURIComponent(controller.token)}`;
@@ -462,12 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
         mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/channel/${channel}?token=${encodeURIComponent(controller.token)}`;
       }
 
-      // Only set src if changed or not playing
-      if (audioEl.getAttribute('data-active-url') !== mediaUrl) {
-        audioEl.setAttribute('data-active-url', mediaUrl);
-        audioEl.src = mediaUrl;
-      }
-      
+      audioEl.src = mediaUrl;
       audioEl.play().catch(err => console.error('[Inline Audio Play Error]', err));
     }
   }
