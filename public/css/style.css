@@ -1118,24 +1118,17 @@ button, input, select, textarea {
   color: #a5b4fc;
 }
 
-/* Inline Player Drawer */
-.player-drawer-row td {
-  padding: 0 !important;
-  border-bottom: 2px solid var(--primary);
-}
-
+/* Inline Admin Player Card */
 .inline-admin-player {
-  background: rgba(15, 23, 42, 0.95);
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  border-radius: var(--radius-md);
-  padding: 1.2rem;
+  background: rgba(13, 18, 30, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
   margin: 0.6rem;
   animation: slideDown 0.25s ease-out;
-}
-
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
 }
 
 .inline-player-header {
@@ -1144,22 +1137,22 @@ button, input, select, textarea {
   align-items: center;
   flex-wrap: wrap;
   gap: 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.85rem;
 }
 
 .inline-player-info {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.25rem;
 }
 
 .ch-btn {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--text-muted);
-  border: 1px solid var(--border-glass);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-full);
-  padding: 0.35rem 0.85rem;
-  font-size: 0.78rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -1169,47 +1162,44 @@ button, input, select, textarea {
 }
 
 .ch-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-main);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .ch-btn.active {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(99, 102, 241, 0.15);
   color: #c7d2fe;
-  border-color: rgba(99, 102, 241, 0.5);
-  box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
+  border-color: rgba(99, 102, 241, 0.4);
 }
 
 .ch-btn[data-ch="1"].active {
-  background: rgba(129, 140, 248, 0.2);
+  background: rgba(129, 140, 248, 0.15);
   color: #a5b4fc;
-  border-color: rgba(129, 140, 248, 0.6);
-  box-shadow: 0 0 12px rgba(129, 140, 248, 0.3);
+  border-color: rgba(129, 140, 248, 0.4);
 }
 
 .ch-btn[data-ch="2"].active {
-  background: rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.15);
   color: #6ee7b7;
-  border-color: rgba(16, 185, 129, 0.6);
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+  border-color: rgba(16, 185, 129, 0.4);
 }
 
 .close-player-btn {
-  background: rgba(244, 63, 94, 0.15);
+  background: rgba(244, 63, 94, 0.12);
   color: #f43f5e;
-  border: 1px solid rgba(244, 63, 94, 0.3);
-  border-radius: var(--radius-sm);
-  padding: 0.35rem 0.8rem;
-  font-size: 0.8rem;
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  border-radius: var(--radius-full);
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
-  margin-left: 0.5rem;
+  margin-left: 0.35rem;
   transition: var(--transition-fast);
 }
 
 .close-player-btn:hover {
-  background: rgba(244, 63, 94, 0.3);
+  background: rgba(244, 63, 94, 0.25);
 }
 
 /* Global Hidden Utility */
@@ -1223,66 +1213,66 @@ button, input, select, textarea {
 }
 
 /* ==========================================================================
-   CUSTOM PLAYBACK CONTROL BAR SYSTEM (Elegant Toned-Down Glassmorphism)
+   REDESIGNED PLAYBACK CONTROL BAR (Rounded Pill, Professional & Proportionate)
    ========================================================================== */
 .custom-player-bar {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  gap: 0.85rem;
+  background: rgba(18, 24, 38, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-md);
-  padding: 0.65rem 1.1rem;
-  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.4);
-  margin-top: 0.75rem;
+  border-radius: var(--radius-full);
+  padding: 0.5rem 1.1rem;
+  box-shadow: 0 6px 20px -4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  margin-top: 0.6rem;
   flex-wrap: wrap;
 }
 
-/* Custom Play / Pause Button */
+/* Play / Pause Button */
 .custom-play-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: #4f46e5;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
   color: #ffffff;
   border: none;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
   transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   flex-shrink: 0;
 }
 
 .custom-play-btn:hover {
   transform: scale(1.06);
-  background: #6366f1;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.45);
 }
 
 .custom-play-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.94);
 }
 
 .custom-play-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   fill: currentColor;
 }
 
 /* Time Display */
 .player-time-display {
-  font-family: 'Outfit', sans-serif;
-  font-size: 0.82rem;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 0.78rem;
   font-weight: 500;
   color: var(--text-muted);
-  min-width: 90px;
+  min-width: 82px;
   text-align: center;
   user-select: none;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   flex-shrink: 0;
 }
 
@@ -1295,18 +1285,18 @@ button, input, select, textarea {
 .progress-seeker-wrapper {
   position: relative;
   flex: 1;
-  min-width: 160px;
+  min-width: 140px;
   display: flex;
   align-items: center;
-  height: 20px;
+  height: 18px;
 }
 
 .progress-track-bg {
   position: absolute;
   left: 0;
   right: 0;
-  height: 5px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: var(--radius-full);
   background: rgba(255, 255, 255, 0.08);
   pointer-events: none;
   overflow: hidden;
@@ -1317,8 +1307,8 @@ button, input, select, textarea {
   left: 0;
   height: 100%;
   width: 0%;
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-full);
   transition: width 0.2s ease;
 }
 
@@ -1327,9 +1317,8 @@ button, input, select, textarea {
   left: 0;
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #4f46e5 0%, #6366f1 100%);
-  border-radius: 3px;
-  box-shadow: 0 1px 6px rgba(99, 102, 241, 0.25);
+  background: linear-gradient(90deg, #6366f1 0%, #818cf8 100%);
+  border-radius: var(--radius-full);
   pointer-events: none;
 }
 
@@ -1337,7 +1326,7 @@ button, input, select, textarea {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 20px;
+  height: 18px;
   background: transparent;
   outline: none;
   cursor: pointer;
@@ -1349,28 +1338,27 @@ button, input, select, textarea {
 .custom-seek-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #ffffff;
-  border: 2px solid #6366f1;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  border: 2px solid #818cf8;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
   cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease;
 }
 
 .custom-seek-input::-webkit-slider-thumb:hover {
   transform: scale(1.25);
-  background: #f8fafc;
 }
 
 .custom-seek-input::-moz-range-thumb {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #ffffff;
-  border: 2px solid #6366f1;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  border: 2px solid #818cf8;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
 
@@ -1378,7 +1366,7 @@ button, input, select, textarea {
 .volume-control-group {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   flex-shrink: 0;
 }
 
@@ -1387,25 +1375,33 @@ button, input, select, textarea {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
+  padding: 3px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color var(--transition-fast);
+  width: 28px;
+  height: 28px;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .custom-vol-btn:hover {
   color: var(--text-main);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.custom-vol-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .custom-vol-input {
   -webkit-appearance: none;
   appearance: none;
-  width: 65px;
+  width: 60px;
   height: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.1);
   outline: none;
   cursor: pointer;
 }
@@ -1413,16 +1409,16 @@ button, input, select, textarea {
 .custom-vol-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #a5b4fc;
   cursor: pointer;
 }
 
 .custom-vol-input::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #a5b4fc;
   cursor: pointer;
@@ -1448,6 +1444,7 @@ audio {
 .empty-state.hidden {
   display: none !important;
 }
+
 
 
 
