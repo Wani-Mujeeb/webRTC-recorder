@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CallWave - Uncompressed Dual-Channel WAV Call Recorder</title>
+  <meta name="description" content="WebRTC audio calling app with automatic dual-channel uncompressed WAV recording and server-secured admin access.">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
+</head>
+<body>
+
+  <!-- APP NAVBAR -->
+  <header class="app-header">
+    <div class="brand-title" id="brand-title-trigger" title="CallWave WAV Recorder (Double-click for Admin Access)">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+      </svg>
+      <span>CallWave <span style="font-size:0.75rem; font-weight:400; color:var(--accent-emerald); opacity:0.9;">PRO WAV</span></span>
+    </div>
+
+    <!-- Hidden / Secret Admin Access Trigger (Keyboard shortcut Ctrl+Shift+A or secret lock) -->
+    <button id="nav-admin-btn" class="admin-nav-btn hidden" style="display:none;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+      Admin Portal
+    </button>
+  </header>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <main class="main-layout">
+
+    <!-- 1. LOBBY VIEW (JOIN / CREATE CALL) -->
+    <section id="lobby-view" class="view-section">
+      <div class="glass-panel lobby-card">
+        <div class="lobby-header">
+          <h2>Start or Join a Call</h2>
+          <p>Lossless dual-channel uncompressed WAV recording enabled automatically.</p>
+          <div class="feature-badge-row">
+            <span class="feature-tag">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              Uncompressed PCM WAV
+            </span>
+            <span class="feature-tag">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              Split Audio (Ch 1 Left / Ch 2 Right)
+            </span>
+            <span class="feature-tag">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              Inspect-Safe Admin Auth
+            </span>
+          </div>
+        </div>
+
+        <form id="join-form">
+          <div class="form-group">
+            <label for="username-input">Your Display Name</label>
+            <input type="text" id="username-input" class="form-control" placeholder="e.g. Alex" required autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label for="room-input">Call Room ID / Name</label>
+            <input type="text" id="room-input" class="form-control" placeholder="e.g. sales-call-401" required autocomplete="off">
+          </div>
+
+          <button type="submit" class="btn-primary">
+            <svg width="20" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+            </svg>
+            Join Call & Auto-Record
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- 2. ACTIVE CALL VIEW -->
+    <section id="call-view" class="view-section hidden">
+      <div class="glass-panel call-card">
+        
+        <!-- Status Header -->
+        <div class="call-status-bar">
+          <div class="recording-indicator">
+            <span class="pulse-dot"></span>
+            <span id="rec-status-text">RECORDING ACTIVE (WAV 16-bit)</span>
+          </div>
+          <div class="call-timer" id="call-timer-display">00:00</div>
+        </div>
+
+        <!-- Share Room Link -->
+        <div class="share-link-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          <input type="text" id="share-link-input" class="share-link-input" readonly>
+          <button id="copy-link-btn" class="btn-copy">Copy Link</button>
+        </div>
+
+        <!-- Dual Channel Audio Visualizers -->
+        <div class="audio-channels-grid">
+          <!-- Left Channel (Host / Local) -->
+          <div class="channel-card channel-left">
+            <div class="channel-header">
+              <span class="channel-tag">Channel 1 (Left)</span>
+              <span style="font-size:0.75rem; color:var(--text-muted);">Local Mic</span>
+            </div>
+            <div class="participant-name" id="local-name-display">You (Host)</div>
+            <canvas id="canvas-left" class="visualizer-canvas"></canvas>
+            <div class="vu-meter-bar">
+              <div id="vu-fill-left" class="vu-meter-fill"></div>
+            </div>
+          </div>
+
+          <!-- Right Channel (Guest / Remote) -->
+          <div class="channel-card channel-right">
+            <div class="channel-header">
+              <span class="channel-tag">Channel 2 (Right)</span>
+              <span style="font-size:0.75rem; color:var(--text-muted);">Remote Peer</span>
+            </div>
+            <div class="participant-name" id="remote-name-display">Waiting for peer...</div>
+            <canvas id="canvas-right" class="visualizer-canvas"></canvas>
+            <div class="vu-meter-bar">
+              <div id="vu-fill-right" class="vu-meter-fill"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Call Actions -->
+        <div class="call-actions">
+          <button id="btn-mute-toggle" class="action-btn" title="Toggle Mute">
+            <svg id="icon-mic-on" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+            <svg id="icon-mic-off" class="hidden" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="1" y1="1" x2="23" y2="23"/>
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/>
+              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+          </button>
+
+          <button id="btn-hangup" class="action-btn btn-hangup" title="End Call & Save WAV Recording">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/>
+              <line x1="23" y1="1" x2="1" y2="23"/>
+            </svg>
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- HIDDEN REMOTE AUDIO ELEMENT FOR WEBRTC PLAYBACK & WEBAUDIO ACTIVATION -->
+  <audio id="remote-audio-element" autoplay playsinline style="display:none;"></audio>
+
+  <!-- FOOTER -->
+  <footer class="app-footer">
+    <span>CallWave Lossless WAV Call Recorder &bull; End-to-End Encrypted</span>
+    <span id="secret-admin-trigger" class="secret-footer-lock" title="Admin Portal (Double-click logo or Ctrl+Shift+A)">🔒</span>
+  </footer>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- SCRIPT DEPENDENCIES (Server endpoint with CDN fallback) -->
+  <script src="/socket.io/socket.io.js" onerror="this.onerror=null;this.src='https://cdn.socket.io/4.7.5/socket.io.min.js';"></script>
+  <script src="js/wav-recorder.js"></script>
+  <script src="js/rtc-manager.js"></script>
+  <script src="js/admin.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+recordings/*
+!recordings/.gitkeep
+data/*
+!data/.gitkeep
+.git
+.env
