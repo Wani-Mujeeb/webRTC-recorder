@@ -305,7 +305,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   Download WAV ▾
                 </button>
-                <div class="download-menu hidden" id="dl-menu-${rec.id}">
+                <div class="download-menu" id="dl-menu-${rec.id}" style="display: none !important;">
                   <button class="dl-item download-stereo-btn" data-id="${rec.id}">🎵 Full Stereo WAV</button>
                   <button class="dl-item download-left-btn" data-id="${rec.id}">🎙 Host Track (Ch 1)</button>
                   <button class="dl-item download-right-btn" data-id="${rec.id}">🎧 Guest Track (Ch 2)</button>
@@ -322,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Drawer Player Row (Inline directly beneath this recording)
         const drawerTr = document.createElement('tr');
         drawerTr.className = 'player-drawer-row hidden';
+        drawerTr.style.display = 'none';
         drawerTr.id = `player-drawer-${rec.id}`;
         drawerTr.innerHTML = `
           <td colspan="7" class="drawer-container-td">
@@ -343,7 +344,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
               
               <div class="player-controls-row">
-                <audio id="audio-player-${rec.id}" controls style="width:100%; border-radius:10px;"></audio>
+                <audio id="audio-player-${rec.id}" controls style="width:100%; border-radius:10px; color-scheme: dark;"></audio>
               </div>
             </div>
           </td>
@@ -365,36 +366,55 @@ document.addEventListener('DOMContentLoaded', () => {
           e.stopPropagation();
           const menu = document.getElementById(`dl-menu-${btn.dataset.id}`);
           document.querySelectorAll('.download-menu').forEach(m => {
-            if (m !== menu) m.classList.remove('show');
+            if (m !== menu) {
+              m.style.display = 'none';
+              m.classList.remove('show');
+            }
           });
-          if (menu) menu.classList.toggle('show');
+          if (menu) {
+            const isShown = menu.style.display === 'block';
+            menu.style.display = isShown ? 'none' : 'block';
+            menu.classList.toggle('show', !isShown);
+          }
         });
       });
 
       // Close dropdown menus when clicking elsewhere
       document.addEventListener('click', () => {
-        document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
+        document.querySelectorAll('.download-menu').forEach(m => {
+          m.style.display = 'none';
+          m.classList.remove('show');
+        });
       });
 
       // Download Action Handlers
       document.querySelectorAll('.download-stereo-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
+          document.querySelectorAll('.download-menu').forEach(m => {
+            m.style.display = 'none';
+            m.classList.remove('show');
+          });
           controller.downloadFile(btn.dataset.id, 0);
         });
       });
       document.querySelectorAll('.download-left-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
+          document.querySelectorAll('.download-menu').forEach(m => {
+            m.style.display = 'none';
+            m.classList.remove('show');
+          });
           controller.downloadFile(btn.dataset.id, 1);
         });
       });
       document.querySelectorAll('.download-right-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
+          document.querySelectorAll('.download-menu').forEach(m => {
+            m.style.display = 'none';
+            m.classList.remove('show');
+          });
           controller.downloadFile(btn.dataset.id, 2);
         });
       });
@@ -440,10 +460,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function playInlineRecording(recId, channel = 0) {
     const targetDrawer = document.getElementById(`player-drawer-${recId}`);
-    const isTargetAlreadyOpen = targetDrawer && !targetDrawer.classList.contains('hidden') && channel === 0;
+    const isTargetAlreadyOpen = targetDrawer && targetDrawer.style.display === 'table-row' && channel === 0;
 
-    // 1. Pause and hide ALL player drawers across the entire page
+    // 1. Close all download dropdown menus
+    document.querySelectorAll('.download-menu').forEach(m => {
+      m.style.display = 'none';
+      m.classList.remove('show');
+    });
+
+    // 2. Pause and hide ALL player drawers across the entire page
     document.querySelectorAll('.player-drawer-row').forEach(row => {
+      row.style.display = 'none';
       row.classList.add('hidden');
       const audio = row.querySelector('audio');
       if (audio) {
@@ -452,17 +479,18 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // 2. Toggle behavior: If user clicked Listen/Play on an already active stereo player, close it
+    // 3. Toggle behavior: If user clicked Listen/Play on an already active stereo player, close it
     if (isTargetAlreadyOpen) {
       return;
     }
 
-    // 3. Open ONLY the selected recording's player drawer
+    // 4. Open ONLY the selected recording's player drawer
     if (targetDrawer) {
+      targetDrawer.style.display = 'table-row';
       targetDrawer.classList.remove('hidden');
     }
 
-    // 4. Instant high-performance audio streaming
+    // 5. Instant high-performance audio streaming
     const audioEl = document.getElementById(`audio-player-${recId}`);
     if (audioEl) {
       let mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/file?token=${encodeURIComponent(controller.token)}`;
@@ -479,9 +507,13 @@ document.addEventListener('DOMContentLoaded', () => {
   function closeInlinePlayer(recId) {
     const drawerRow = document.getElementById(`player-drawer-${recId}`);
     if (drawerRow) {
+      drawerRow.style.display = 'none';
       drawerRow.classList.add('hidden');
       const audio = drawerRow.querySelector('audio');
-      if (audio) audio.pause();
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
     }
   }
 
