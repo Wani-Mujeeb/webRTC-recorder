@@ -336,20 +336,51 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 <div class="channel-selector-group">
                   <span class="ch-label">Audio Track:</span>
-                  <button class="ch-btn active" data-id="${rec.id}" data-ch="0">Stereo Both</button>
-                  <button class="ch-btn" data-id="${rec.id}" data-ch="1">Ch 1 (Host)</button>
-                  <button class="ch-btn" data-id="${rec.id}" data-ch="2">Ch 2 (Guest)</button>
+                  <button class="ch-btn active" data-id="${rec.id}" data-ch="0">🎵 Stereo Both</button>
+                  <button class="ch-btn" data-id="${rec.id}" data-ch="1">🎙 Host (Ch 1)</button>
+                  <button class="ch-btn" data-id="${rec.id}" data-ch="2">🎧 Guest (Ch 2)</button>
                   <button class="close-player-btn" data-id="${rec.id}" title="Close Player">✕ Close</button>
                 </div>
               </div>
               
-              <div class="player-controls-row">
-                <audio id="audio-player-${rec.id}" controls style="width:100%; border-radius:10px; color-scheme: dark;"></audio>
+              <div class="custom-player-bar" id="custom-player-bar-${rec.id}">
+                <button class="custom-play-btn" id="play-btn-${rec.id}" data-id="${rec.id}" title="Play / Pause">
+                  <svg class="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <svg class="icon-pause hidden" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                </button>
+
+                <div class="player-time-display" id="time-display-${rec.id}">
+                  <span class="current-time" id="cur-time-${rec.id}">00:00</span> / <span class="total-duration" id="dur-time-${rec.id}">${durationStr}</span>
+                </div>
+
+                <div class="progress-seeker-wrapper">
+                  <div class="progress-track-bg"></div>
+                  <div class="progress-buffer-fill" id="buffer-fill-${rec.id}"></div>
+                  <div class="progress-active-fill" id="active-fill-${rec.id}"></div>
+                  <input type="range" class="custom-seek-input" id="seek-input-${rec.id}" data-id="${rec.id}" min="0" max="${rec.duration || 100}" value="0" step="0.1">
+                </div>
+
+                <div class="volume-control-group">
+                  <button class="custom-vol-btn" id="vol-btn-${rec.id}" data-id="${rec.id}" title="Mute / Unmute">
+                    <svg class="icon-vol-on" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                    </svg>
+                    <svg class="icon-vol-off hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    </svg>
+                  </button>
+                  <input type="range" class="custom-vol-input" id="vol-input-${rec.id}" data-id="${rec.id}" min="0" max="1" value="1" step="0.05">
+                </div>
+
+                <audio id="audio-player-${rec.id}" preload="metadata" style="display:none;"></audio>
               </div>
             </div>
           </td>
         `;
         recordingsTableBody.appendChild(drawerTr);
+        bindCustomPlayerControls(rec.id, rec.duration);
       });
 
       // Bind Play button handlers
@@ -458,6 +489,144 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function bindCustomPlayerControls(recId, fallbackDuration) {
+    const audioEl = document.getElementById(`audio-player-${recId}`);
+    const playBtn = document.getElementById(`play-btn-${recId}`);
+    const curTimeEl = document.getElementById(`cur-time-${recId}`);
+    const durTimeEl = document.getElementById(`dur-time-${recId}`);
+    const bufferFill = document.getElementById(`buffer-fill-${recId}`);
+    const activeFill = document.getElementById(`active-fill-${recId}`);
+    const seekInput = document.getElementById(`seek-input-${recId}`);
+    const volBtn = document.getElementById(`vol-btn-${recId}`);
+    const volInput = document.getElementById(`vol-input-${recId}`);
+
+    if (!audioEl || !playBtn || !seekInput) return;
+
+    const iconPlay = playBtn.querySelector('.icon-play');
+    const iconPause = playBtn.querySelector('.icon-pause');
+    const iconVolOn = volBtn.querySelector('.icon-vol-on');
+    const iconVolOff = volBtn.querySelector('.icon-vol-off');
+
+    let isUserSeeking = false;
+
+    function updateDurationDisplay() {
+      const dur = (audioEl.duration && !isNaN(audioEl.duration) && isFinite(audioEl.duration) && audioEl.duration > 0)
+        ? audioEl.duration
+        : fallbackDuration;
+      if (dur) {
+        seekInput.max = dur;
+        if (durTimeEl) durTimeEl.textContent = controller.formatDuration(dur);
+      }
+    }
+
+    // Playback state updates
+    audioEl.addEventListener('play', () => {
+      if (iconPlay) iconPlay.classList.add('hidden');
+      if (iconPause) iconPause.classList.remove('hidden');
+    });
+
+    audioEl.addEventListener('pause', () => {
+      if (iconPlay) iconPlay.classList.remove('hidden');
+      if (iconPause) iconPause.classList.add('hidden');
+    });
+
+    audioEl.addEventListener('ended', () => {
+      if (iconPlay) iconPlay.classList.remove('hidden');
+      if (iconPause) iconPause.classList.add('hidden');
+      if (seekInput) seekInput.value = 0;
+      if (activeFill) activeFill.style.width = '0%';
+      if (curTimeEl) curTimeEl.textContent = '00:00';
+    });
+
+    audioEl.addEventListener('loadedmetadata', updateDurationDisplay);
+    audioEl.addEventListener('durationchange', updateDurationDisplay);
+
+    audioEl.addEventListener('timeupdate', () => {
+      if (isUserSeeking) return;
+      const dur = (audioEl.duration && !isNaN(audioEl.duration) && isFinite(audioEl.duration) && audioEl.duration > 0)
+        ? audioEl.duration
+        : fallbackDuration || 1;
+      const cur = audioEl.currentTime || 0;
+
+      if (curTimeEl) curTimeEl.textContent = controller.formatDuration(cur);
+      if (durTimeEl) durTimeEl.textContent = controller.formatDuration(dur);
+      if (seekInput) {
+        seekInput.max = dur;
+        seekInput.value = cur;
+      }
+
+      const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
+      if (activeFill) activeFill.style.width = `${pct}%`;
+    });
+
+    audioEl.addEventListener('progress', () => {
+      const dur = (audioEl.duration && !isNaN(audioEl.duration) && isFinite(audioEl.duration) && audioEl.duration > 0)
+        ? audioEl.duration
+        : fallbackDuration || 1;
+      if (audioEl.buffered.length > 0) {
+        const bufEnd = audioEl.buffered.end(audioEl.buffered.length - 1);
+        const bufPct = Math.min(100, Math.max(0, (bufEnd / dur) * 100));
+        if (bufferFill) bufferFill.style.width = `${bufPct}%`;
+      }
+    });
+
+    // Play / Pause toggle click
+    playBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (audioEl.paused) {
+        audioEl.play().catch(err => console.error('Play error:', err));
+      } else {
+        audioEl.pause();
+      }
+    });
+
+    // Seek bar interaction
+    seekInput.addEventListener('mousedown', () => { isUserSeeking = true; });
+    seekInput.addEventListener('touchstart', () => { isUserSeeking = true; });
+
+    seekInput.addEventListener('input', () => {
+      const val = parseFloat(seekInput.value);
+      const dur = parseFloat(seekInput.max) || 1;
+      if (curTimeEl) curTimeEl.textContent = controller.formatDuration(val);
+      const pct = Math.min(100, Math.max(0, (val / dur) * 100));
+      if (activeFill) activeFill.style.width = `${pct}%`;
+    });
+
+    seekInput.addEventListener('change', () => {
+      isUserSeeking = false;
+      audioEl.currentTime = parseFloat(seekInput.value);
+    });
+
+    // Volume & Mute control
+    volInput.addEventListener('input', () => {
+      const vol = parseFloat(volInput.value);
+      audioEl.volume = vol;
+      audioEl.muted = (vol === 0);
+      if (audioEl.muted) {
+        if (iconVolOn) iconVolOn.classList.add('hidden');
+        if (iconVolOff) iconVolOff.classList.remove('hidden');
+      } else {
+        if (iconVolOn) iconVolOn.classList.remove('hidden');
+        if (iconVolOff) iconVolOff.classList.add('hidden');
+      }
+    });
+
+    volBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      audioEl.muted = !audioEl.muted;
+      if (audioEl.muted) {
+        if (iconVolOn) iconVolOn.classList.add('hidden');
+        if (iconVolOff) iconVolOff.classList.remove('hidden');
+        volInput.value = 0;
+      } else {
+        if (iconVolOn) iconVolOn.classList.remove('hidden');
+        if (iconVolOff) iconVolOff.classList.add('hidden');
+        volInput.value = audioEl.volume > 0 ? audioEl.volume : 1;
+        audioEl.volume = parseFloat(volInput.value);
+      }
+    });
+  }
+
   function playInlineRecording(recId, channel = 0) {
     const targetDrawer = document.getElementById(`player-drawer-${recId}`);
     const isTargetAlreadyOpen = targetDrawer && targetDrawer.style.display === 'table-row' && channel === 0;
@@ -492,6 +661,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 5. Instant high-performance audio streaming
     const audioEl = document.getElementById(`audio-player-${recId}`);
+    const seekInput = document.getElementById(`seek-input-${recId}`);
+    const activeFill = document.getElementById(`active-fill-${recId}`);
+    const bufferFill = document.getElementById(`buffer-fill-${recId}`);
+    const curTimeEl = document.getElementById(`cur-time-${recId}`);
+
     if (audioEl) {
       let mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/file?token=${encodeURIComponent(controller.token)}`;
       if (channel === 1 || channel === 2) {
@@ -499,6 +673,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       audioEl.src = mediaUrl;
+      if (seekInput) seekInput.value = 0;
+      if (activeFill) activeFill.style.width = '0%';
+      if (bufferFill) bufferFill.style.width = '0%';
+      if (curTimeEl) curTimeEl.textContent = '00:00';
+
       audioEl.load();
       audioEl.play().catch(err => console.error('[Inline Audio Play Error]', err));
     }

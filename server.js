@@ -451,27 +451,82 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
     monoWavHeader.write('data', 36);
     monoWavHeader.writeUInt32LE(monoDataSize, 40);
 
+    const totalMonoFileSize = 44 + monoDataSize;
     const channelName = targetChannel === 1 ? 'Host-Left' : 'Guest-Right';
     const downloadFilename = rec.filename.replace('.wav', `-${channelName}.wav`);
 
     const isDownload = req.query.dl === '1' || req.query.download === '1';
     const dispositionType = isDownload ? 'attachment' : 'inline';
+    const range = req.headers.range;
 
-    res.setHeader('Content-Type', 'audio/wav');
-    res.setHeader('Content-Disposition', `${dispositionType}; filename="${downloadFilename}"`);
+    if (range && !isDownload) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : totalMonoFileSize - 1;
 
-    // Stream mono header and transformed PCM stream memory-efficiently
-    res.write(monoWavHeader);
+      if (start >= totalMonoFileSize || end >= totalMonoFileSize || start > end) {
+        res.setHeader('Content-Range', `bytes */${totalMonoFileSize}`);
+        return res.status(416).send('Requested Range Not Satisfiable');
+      }
 
-    const fileStream = fs.createReadStream(filePath, {
-      start: dataOffset,
-      end: dataOffset + dataSize - 1,
-      highWaterMark: 64 * 1024
-    });
+      const chunkSize = (end - start) + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${totalMonoFileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'audio/wav',
+        'Content-Disposition': `${dispositionType}; filename="${downloadFilename}"`
+      });
 
-    const channelTransform = new MonoChannelTransform(targetChannel);
+      // Stream header slice if within byte offset 0-43
+      if (start < 44) {
+        const headerEnd = Math.min(43, end);
+        const headerSlice = monoWavHeader.subarray(start, headerEnd + 1);
+        res.write(headerSlice);
+      }
 
-    fileStream.pipe(channelTransform).pipe(res);
+      // Stream PCM payload slice if range extends past byte 43
+      if (end >= 44) {
+        const monoDataStart = Math.max(0, start - 44);
+        const monoDataEnd = end - 44;
+        const alignedMonoStart = monoDataStart - (monoDataStart % 2);
+        const startSampleIdx = Math.floor(alignedMonoStart / 2);
+        const endSampleIdx = Math.floor(monoDataEnd / 2);
+
+        const stereoStartByte = dataOffset + (startSampleIdx * 4);
+        const stereoEndByte = dataOffset + ((endSampleIdx + 1) * 4) - 1;
+
+        const fileStream = fs.createReadStream(filePath, {
+          start: stereoStartByte,
+          end: Math.min(dataOffset + dataSize - 1, stereoEndByte),
+          highWaterMark: 64 * 1024
+        });
+
+        const channelTransform = new MonoChannelTransform(targetChannel);
+        fileStream.pipe(channelTransform).pipe(res);
+      } else {
+        res.end();
+      }
+    } else {
+      res.writeHead(200, {
+        'Content-Length': totalMonoFileSize,
+        'Accept-Ranges': 'bytes',
+        'Content-Type': 'audio/wav',
+        'Content-Disposition': `${dispositionType}; filename="${downloadFilename}"`
+      });
+
+      res.write(monoWavHeader);
+
+      const fileStream = fs.createReadStream(filePath, {
+        start: dataOffset,
+        end: dataOffset + dataSize - 1,
+        highWaterMark: 64 * 1024
+      });
+
+      const channelTransform = new MonoChannelTransform(targetChannel);
+
+      fileStream.pipe(channelTransform).pipe(res);
+    }
 
   } catch (err) {
     if (fd !== null) {
