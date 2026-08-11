@@ -363,33 +363,36 @@ document.addEventListener('DOMContentLoaded', () => {
           e.stopPropagation();
           const menu = document.getElementById(`dl-menu-${btn.dataset.id}`);
           document.querySelectorAll('.download-menu').forEach(m => {
-            if (m !== menu) m.classList.add('hidden');
+            if (m !== menu) m.classList.remove('show');
           });
-          if (menu) menu.classList.toggle('hidden');
+          if (menu) menu.classList.toggle('show');
         });
       });
 
       // Close dropdown menus when clicking elsewhere
       document.addEventListener('click', () => {
-        document.querySelectorAll('.download-menu').forEach(m => m.classList.add('hidden'));
+        document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
       });
 
       // Download Action Handlers
       document.querySelectorAll('.download-stereo-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
+          document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
           controller.downloadFile(btn.dataset.id, 0);
         });
       });
       document.querySelectorAll('.download-left-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
+          document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
           controller.downloadFile(btn.dataset.id, 1);
         });
       });
       document.querySelectorAll('.download-right-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
+          document.querySelectorAll('.download-menu').forEach(m => m.classList.remove('show'));
           controller.downloadFile(btn.dataset.id, 2);
         });
       });
@@ -433,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  async function playInlineRecording(recId, channel = 0) {
+  function playInlineRecording(recId, channel = 0) {
     // 1. Hide any other active drawer player and pause its audio
     document.querySelectorAll('.player-drawer-row').forEach(row => {
       if (row.id !== `player-drawer-${recId}`) {
@@ -449,20 +452,16 @@ document.addEventListener('DOMContentLoaded', () => {
       drawerRow.classList.remove('hidden');
     }
 
-    // 3. Fetch channel file
-    try {
-      let endpoint = `${controller.baseUrl}/api/admin/recordings/${recId}/file`;
+    // 3. Instant Native HTTP Range Audio Streaming (10ms start!)
+    const audioEl = document.getElementById(`audio-player-${recId}`);
+    if (audioEl) {
+      let mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/file?token=${encodeURIComponent(controller.token)}`;
       if (channel === 1 || channel === 2) {
-        endpoint = `${controller.baseUrl}/api/admin/recordings/${recId}/channel/${channel}`;
+        mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/channel/${channel}?token=${encodeURIComponent(controller.token)}`;
       }
 
-      const response = await fetch(endpoint, {
-        headers: { 'Authorization': `Bearer ${controller.token}` }
-      });
-      const blob = await response.blob();
-      setInlineAudioSource(recId, blob);
-    } catch (err) {
-      showToast('Error loading audio stream', 'error');
+      audioEl.src = mediaUrl;
+      audioEl.play().catch(err => console.error('[Inline Audio Play Error]', err));
     }
   }
 

@@ -1082,6 +1082,7 @@ button, input, select, textarea {
 }
 
 .download-menu {
+  display: none !important;
   position: absolute;
   top: 100%;
   right: 0;
@@ -1093,6 +1094,10 @@ button, input, select, textarea {
   z-index: 100;
   min-width: 180px;
   overflow: hidden;
+}
+
+.download-menu.show {
+  display: block !important;
 }
 
 .dl-item {
