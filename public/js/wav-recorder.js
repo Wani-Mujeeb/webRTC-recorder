@@ -55,22 +55,12 @@ class DualChannelWavRecorder {
     }
     this.sampleRate = this.audioCtx.sampleRate;
 
-    // Create 2-Channel Merger
-    // Channel 0 (Left) -> Host Audio
-    // Channel 1 (Right) -> Guest Audio
-    this.mergerNode = this.audioCtx.createChannelMerger(2);
-
-    const localChannelIndex = isHost ? 0 : 1;  // Host mic -> Ch 0, Guest mic -> Ch 1
-    const remoteChannelIndex = isHost ? 1 : 0; // Host remote -> Ch 1, Guest remote -> Ch 0
-
     if (localStream && localStream.getAudioTracks().length > 0) {
       this.localSource = this.audioCtx.createMediaStreamSource(localStream);
-      this.localSource.connect(this.mergerNode, 0, localChannelIndex);
     }
 
     if (remoteStream && remoteStream.getAudioTracks().length > 0) {
       this.remoteSource = this.audioCtx.createMediaStreamSource(remoteStream);
-      this.remoteSource.connect(this.mergerNode, 0, remoteChannelIndex);
     }
 
     this.leftChannelBuffers = [];
@@ -98,19 +88,32 @@ class DualChannelWavRecorder {
       try {
         const workletCode = `
           class DualChannelProcessor extends AudioWorkletProcessor {
-            process(inputs, outputs) {
-              const input = inputs[0];
-              if (input && input.length > 0) {
-                const ch0 = input[0];
-                const ch1 = input[1];
-                const len = ch0 ? ch0.length : 128;
-                const left = ch0 || new Float32Array(len);
-                const right = ch1 || new Float32Array(len);
-                this.port.postMessage({
-                  left: left,
-                  right: right
-                });
+            process(inputs) {
+              const in0 = inputs[0];
+              const in1 = inputs[1];
+
+              const ch0 = (in0 && in0.length > 0) ? in0[0] : null;
+              const ch1 = (in1 && in1.length > 0) ? in1[0] : null;
+
+              const len = ch0 ? ch0.length : (ch1 ? ch1.length : 128);
+
+              const left = new Float32Array(len);
+              const right = new Float32Array(len);
+
+              if (ch0) left.set(ch0);
+              if (ch1) right.set(ch1);
+
+              // Anti-pop NaN / Infinity filtering
+              for (let i = 0; i < len; i++) {
+                if (isNaN(left[i]) || !isFinite(left[i])) left[i] = 0;
+                if (isNaN(right[i]) || !isFinite(right[i])) right[i] = 0;
               }
+
+              // Atomically transfer memory ownership (Zero Memory Race Conditions)
+              this.port.postMessage(
+                { left: left, right: right },
+                [left.buffer, right.buffer]
+              );
               return true;
             }
           }
@@ -122,7 +125,7 @@ class DualChannelWavRecorder {
         URL.revokeObjectURL(workletUrl);
 
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'dual-channel-processor', {
-          numberOfInputs: 1,
+          numberOfInputs: 2,
           numberOfOutputs: 1,
           outputChannelCount: [2]
         });
@@ -130,12 +133,25 @@ class DualChannelWavRecorder {
         this.workletNode.port.onmessage = (e) => {
           if (!this.isRecording) return;
           const { left, right } = e.data;
-          this.leftChannelBuffers.push(new Float32Array(left));
-          this.rightChannelBuffers.push(new Float32Array(right));
+          this.leftChannelBuffers.push(left);
+          this.rightChannelBuffers.push(right);
           this.recordingLength += left.length;
         };
 
-        this.mergerNode.connect(this.workletNode);
+        // Direct multi-input connection (Host -> Left Input 0, Guest -> Right Input 1)
+        const hostInputIdx = 0;
+        const guestInputIdx = 1;
+
+        if (this.localSource) {
+          const localInputTarget = isHost ? hostInputIdx : guestInputIdx;
+          this.localSource.connect(this.workletNode, 0, localInputTarget);
+        }
+
+        if (this.remoteSource) {
+          const remoteInputTarget = isHost ? guestInputIdx : hostInputIdx;
+          this.remoteSource.connect(this.workletNode, 0, remoteInputTarget);
+        }
+
         const silentGain = this.audioCtx.createGain();
         silentGain.gain.value = 0;
         this.workletNode.connect(silentGain);
@@ -147,6 +163,17 @@ class DualChannelWavRecorder {
     }
 
     if (!workletSuccess) {
+      this.mergerNode = this.audioCtx.createChannelMerger(2);
+      const localChannelIndex = isHost ? 0 : 1;
+      const remoteChannelIndex = isHost ? 1 : 0;
+
+      if (this.localSource) {
+        this.localSource.connect(this.mergerNode, 0, localChannelIndex);
+      }
+      if (this.remoteSource) {
+        this.remoteSource.connect(this.mergerNode, 0, remoteChannelIndex);
+      }
+
       const bufferSize = 4096;
       this.processorNode = this.audioCtx.createScriptProcessor(bufferSize, 2, 2);
       this.processorNode.onaudioprocess = (e) => {
@@ -335,15 +362,21 @@ class DualChannelWavRecorder {
 
     let offset = 0;
     for (let i = 0; i < length; i++) {
-      // Left channel sample
-      let sLeft = Math.max(-1, Math.min(1, leftChannel[i]));
-      sLeft = sLeft < 0 ? sLeft * 0x8000 : sLeft * 0x7FFF;
+      let lVal = leftChannel[i];
+      let rVal = rightChannel[i] || 0;
+
+      if (isNaN(lVal) || !isFinite(lVal)) lVal = 0;
+      if (isNaN(rVal) || !isFinite(rVal)) rVal = 0;
+
+      // Left channel sample (-1.0 to 1.0 -> -32768 to 32767)
+      let sLeft = Math.max(-1, Math.min(1, lVal));
+      sLeft = sLeft < 0 ? Math.floor(sLeft * 0x8000) : Math.floor(sLeft * 0x7FFF);
       view.setInt16(offset, sLeft, true);
       offset += 2;
 
       // Right channel sample
-      let sRight = Math.max(-1, Math.min(1, rightChannel[i] || 0));
-      sRight = sRight < 0 ? sRight * 0x8000 : sRight * 0x7FFF;
+      let sRight = Math.max(-1, Math.min(1, rVal));
+      sRight = sRight < 0 ? Math.floor(sRight * 0x8000) : Math.floor(sRight * 0x7FFF);
       view.setInt16(offset, sRight, true);
       offset += 2;
     }
@@ -397,15 +430,21 @@ class DualChannelWavRecorder {
     // Interleave left and right Float32 samples and convert to 16-bit PCM Signed Integer (-32768 to 32767)
     let offset = 44;
     for (let i = 0; i < length; i++) {
+      let lVal = leftChannel[i];
+      let rVal = rightChannel[i] || 0;
+
+      if (isNaN(lVal) || !isFinite(lVal)) lVal = 0;
+      if (isNaN(rVal) || !isFinite(rVal)) rVal = 0;
+
       // Left channel sample
-      let sLeft = Math.max(-1, Math.min(1, leftChannel[i]));
-      sLeft = sLeft < 0 ? sLeft * 0x8000 : sLeft * 0x7FFF;
+      let sLeft = Math.max(-1, Math.min(1, lVal));
+      sLeft = sLeft < 0 ? Math.floor(sLeft * 0x8000) : Math.floor(sLeft * 0x7FFF);
       view.setInt16(offset, sLeft, true);
       offset += 2;
 
       // Right channel sample
-      let sRight = Math.max(-1, Math.min(1, rightChannel[i]));
-      sRight = sRight < 0 ? sRight * 0x8000 : sRight * 0x7FFF;
+      let sRight = Math.max(-1, Math.min(1, rVal));
+      sRight = sRight < 0 ? Math.floor(sRight * 0x8000) : Math.floor(sRight * 0x7FFF);
       view.setInt16(offset, sRight, true);
       offset += 2;
     }
