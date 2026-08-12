@@ -151,7 +151,10 @@ class AdminPortalController {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    window.URL.revokeObjectURL(url);
+
+    setTimeout(() => {
+      window.URL.revokeObjectURL(url);
+    }, 10000);
   }
 
   /**
@@ -420,33 +423,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Download Action Handlers
       document.querySelectorAll('.download-stereo-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           document.querySelectorAll('.download-menu').forEach(m => {
             m.style.display = 'none';
             m.classList.remove('show');
           });
-          controller.downloadFile(btn.dataset.id, 0);
+          try {
+            showToast('Preparing Stereo WAV download...', 'info');
+            await controller.downloadFile(btn.dataset.id, 0);
+            showToast('Stereo WAV downloaded successfully', 'success');
+          } catch (err) {
+            showToast(err.message || 'Download failed', 'error');
+          }
         });
       });
       document.querySelectorAll('.download-left-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           document.querySelectorAll('.download-menu').forEach(m => {
             m.style.display = 'none';
             m.classList.remove('show');
           });
-          controller.downloadFile(btn.dataset.id, 1);
+          try {
+            showToast('Preparing Ch 1 (Host) WAV download...', 'info');
+            await controller.downloadFile(btn.dataset.id, 1);
+            showToast('Ch 1 WAV downloaded successfully', 'success');
+          } catch (err) {
+            showToast(err.message || 'Download failed', 'error');
+          }
         });
       });
       document.querySelectorAll('.download-right-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           document.querySelectorAll('.download-menu').forEach(m => {
             m.style.display = 'none';
             m.classList.remove('show');
           });
-          controller.downloadFile(btn.dataset.id, 2);
+          try {
+            showToast('Preparing Ch 2 (Guest) WAV download...', 'info');
+            await controller.downloadFile(btn.dataset.id, 2);
+            showToast('Ch 2 WAV downloaded successfully', 'success');
+          } catch (err) {
+            showToast(err.message || 'Download failed', 'error');
+          }
         });
       });
 

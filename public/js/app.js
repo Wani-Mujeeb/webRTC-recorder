@@ -136,9 +136,13 @@ document.addEventListener('DOMContentLoaded', () => {
           // Auto-start recording as soon as both streams are present
           if (!wavRecorder || !wavRecorder.isRecording) {
             wavRecorder = new window.DualChannelWavRecorder();
-            wavRecorder.start(rtcManager.localStream, remoteStream, isHost);
+            wavRecorder.start(rtcManager.localStream, remoteStream, isHost, visualizerAudioCtx, {
+              roomId: activeRoomId,
+              hostName: isHost ? localUsername : remoteUsername,
+              guestName: isHost ? remoteUsername : localUsername
+            });
             recStatusText.textContent = 'RECORDING ACTIVE (WAV 16-bit PCM)';
-            showToast('Dual-channel WAV recording started automatically', 'success');
+            showToast('Dual-channel WAV recording & parallel stream upload active', 'success');
           }
         },
         onUserJoined: ({ username }) => {
@@ -220,8 +224,15 @@ document.addEventListener('DOMContentLoaded', () => {
       rtcManager = null;
     }
 
+    if (wavData && wavData.serverRecording) {
+      showToast('Call recording saved instantly!', 'success');
+      recStatusText.textContent = 'RECORDING SAVED';
+      fetchRecordingsList();
+      return;
+    }
+
     if (wavData && wavData.blob) {
-      // Upload recording to server
+      // Fallback: Full Blob upload to server if parallel streaming was not used
       const formData = new FormData();
       formData.append('audio', wavData.blob, `call-${activeRoomId}.wav`);
       formData.append('roomId', activeRoomId);
@@ -268,14 +279,29 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   // DUAL AUDIO VISUALIZER (OSCILLOSCOPE & VU METER)
   // -------------------------------------------------------------
+  function updateCanvasDimensions() {
+    [canvasLeft, canvasRight].forEach(canvas => {
+      if (canvas && canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+        if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight) {
+          canvas.width = canvas.clientWidth;
+          canvas.height = canvas.clientHeight;
+        }
+      }
+    });
+  }
+
+  window.addEventListener('resize', updateCanvasDimensions);
+
   async function setupVisualizers(localStream, remoteStream) {
     if (!visualizerAudioCtx) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      visualizerAudioCtx = new AudioCtx();
+      visualizerAudioCtx = new AudioCtx({ sampleRate: 48000, latencyHint: 'interactive' });
     }
     if (visualizerAudioCtx.state === 'suspended') {
       await visualizerAudioCtx.resume();
     }
+
+    updateCanvasDimensions();
 
     if (localStream && !leftAnalyser) {
       const localSource = visualizerAudioCtx.createMediaStreamSource(localStream);
@@ -291,7 +317,9 @@ document.addEventListener('DOMContentLoaded', () => {
       remoteSource.connect(rightAnalyser);
     }
 
-    drawVisualizers();
+    if (!animFrameId) {
+      drawVisualizers();
+    }
   }
 
   function drawVisualizers() {
@@ -314,8 +342,8 @@ document.addEventListener('DOMContentLoaded', () => {
     analyser.getByteTimeDomainData(dataArray);
 
     const ctx = canvas.getContext('2d');
-    const width = canvas.width = canvas.clientWidth;
-    const height = canvas.height = canvas.clientHeight;
+    const width = canvas.width || canvas.clientWidth || 300;
+    const height = canvas.height || canvas.clientHeight || 80;
 
     ctx.clearRect(0, 0, width, height);
     ctx.lineWidth = 2;
@@ -504,13 +532,37 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => playRecording(btn.dataset.id));
       });
       document.querySelectorAll('.download-stereo-btn').forEach(btn => {
-        btn.addEventListener('click', () => adminController.downloadFile(btn.dataset.id, 0));
+        btn.addEventListener('click', async () => {
+          try {
+            showToast('Preparing Stereo WAV download...', 'info');
+            await adminController.downloadFile(btn.dataset.id, 0);
+            showToast('Stereo WAV downloaded successfully', 'success');
+          } catch (e) {
+            showToast(e.message || 'Download failed', 'error');
+          }
+        });
       });
       document.querySelectorAll('.download-left-btn').forEach(btn => {
-        btn.addEventListener('click', () => adminController.downloadFile(btn.dataset.id, 1));
+        btn.addEventListener('click', async () => {
+          try {
+            showToast('Preparing Ch 1 (Host) WAV download...', 'info');
+            await adminController.downloadFile(btn.dataset.id, 1);
+            showToast('Ch 1 WAV downloaded successfully', 'success');
+          } catch (e) {
+            showToast(e.message || 'Download failed', 'error');
+          }
+        });
       });
       document.querySelectorAll('.download-right-btn').forEach(btn => {
-        btn.addEventListener('click', () => adminController.downloadFile(btn.dataset.id, 2));
+        btn.addEventListener('click', async () => {
+          try {
+            showToast('Preparing Ch 2 (Guest) WAV download...', 'info');
+            await adminController.downloadFile(btn.dataset.id, 2);
+            showToast('Ch 2 WAV downloaded successfully', 'success');
+          } catch (e) {
+            showToast(e.message || 'Download failed', 'error');
+          }
+        });
       });
       document.querySelectorAll('.delete-rec-btn').forEach(btn => {
         btn.addEventListener('click', () => deleteRecording(btn.dataset.id));

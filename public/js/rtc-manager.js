@@ -50,7 +50,10 @@ class RTCManager {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1,
+          latency: 0
         },
         video: false
       });
@@ -88,6 +91,7 @@ class RTCManager {
         const offer = await this.peerConnection.createOffer({
           offerToReceiveAudio: true
         });
+        offer.sdp = this._optimizeOpusSDP(offer.sdp);
         await this.peerConnection.setLocalDescription(offer);
 
         this.socket.emit('signal-offer', {
@@ -111,6 +115,7 @@ class RTCManager {
           await this._createPeerConnection(peer.socketId);
           if (this.isHost) {
             const offer = await this.peerConnection.createOffer({ offerToReceiveAudio: true });
+            offer.sdp = this._optimizeOpusSDP(offer.sdp);
             await this.peerConnection.setLocalDescription(offer);
             this.socket.emit('signal-offer', {
               targetSocketId: peer.socketId,
@@ -131,6 +136,7 @@ class RTCManager {
       await this._flushIceCandidateQueue();
 
       const answer = await this.peerConnection.createAnswer();
+      answer.sdp = this._optimizeOpusSDP(answer.sdp);
       await this.peerConnection.setLocalDescription(answer);
 
       this.socket.emit('signal-answer', {
@@ -312,6 +318,41 @@ class RTCManager {
       this.remoteStream.getTracks().forEach(track => track.stop());
       this.remoteStream = null;
     }
+  }
+
+  /**
+   * Optimize WebRTC Opus SDP for maximum 48kHz bitrate, disabling DTX silence cuts
+   */
+  _optimizeOpusSDP(sdp) {
+    if (!sdp) return sdp;
+    let lines = sdp.split('\r\n');
+    let opusPayloadType = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes('a=rtpmap:') && lines[i].toLowerCase().includes('opus/48000')) {
+        const match = lines[i].match(/a=rtpmap:(\d+)\s+opus\/48000/i);
+        if (match) {
+          opusPayloadType = match[1];
+        }
+      }
+    }
+
+    if (opusPayloadType) {
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith(`a=fmtp:${opusPayloadType}`)) {
+          let fmtp = lines[i];
+          if (!fmtp.includes('minptime=')) fmtp += ';minptime=10';
+          if (!fmtp.includes('useinbandfec=')) fmtp += ';useinbandfec=1';
+          if (!fmtp.includes('usedtx=')) fmtp += ';usedtx=0';
+          if (!fmtp.includes('maxaveragebitrate=')) fmtp += ';maxaveragebitrate=510000';
+          if (!fmtp.includes('cbr=')) fmtp += ';cbr=1';
+          if (!fmtp.includes('maxplaybackrate=')) fmtp += ';maxplaybackrate=48000';
+          if (!fmtp.includes('sprop-maxcapturerate=')) fmtp += ';sprop-maxcapturerate=48000';
+          lines[i] = fmtp;
+        }
+      }
+    }
+    return lines.join('\r\n');
   }
 }
 

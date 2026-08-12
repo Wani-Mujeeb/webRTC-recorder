@@ -95,7 +95,9 @@ function saveRecordingsMetadata(recordings) {
 }
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ['Content-Disposition', 'Content-Length', 'Accept-Ranges', 'Content-Range']
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -248,6 +250,129 @@ app.post('/api/recordings/upload', (req, res) => {
       res.status(500).json({ success: false, message: 'Server error during recording upload.' });
     }
   });
+});
+// Upload real-time audio chunk in background during active call
+app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet-stream', 'audio/wav', 'audio/pcm'], limit: '20mb' }), (req, res) => {
+  try {
+    const streamId = req.query.streamId || req.headers['x-stream-id'];
+    const chunkIndex = parseInt(req.query.chunkIndex || req.headers['x-chunk-index'] || '0', 10);
+
+    if (!streamId || !req.body || req.body.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid chunk data or missing streamId.' });
+    }
+
+    const safeStreamId = streamId.replace(/[^a-zA-Z0-9-]/g, '');
+    const tempFilePath = path.join(RECORDINGS_DIR, `temp-${safeStreamId}.raw`);
+
+    fs.appendFileSync(tempFilePath, req.body);
+
+    res.json({
+      success: true,
+      message: `Chunk ${chunkIndex} received.`,
+      bytesReceived: req.body.length
+    });
+  } catch (err) {
+    console.error('Error saving stream chunk:', err);
+    res.status(500).json({ success: false, message: 'Failed to write stream chunk.' });
+  }
+});
+
+// Finalize parallel audio stream upload and generate 44-byte WAV header on server
+app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
+  try {
+    const { streamId, roomId, hostName, guestName, duration, sampleRate, numChannels } = req.body;
+    if (!streamId) {
+      return res.status(400).json({ success: false, message: 'Missing streamId.' });
+    }
+
+    const safeStreamId = streamId.replace(/[^a-zA-Z0-9-]/g, '');
+    const tempFilePath = path.join(RECORDINGS_DIR, `temp-${safeStreamId}.raw`);
+
+    if (!fs.existsSync(tempFilePath)) {
+      return res.status(404).json({ success: false, message: 'No stream chunks found for this session.' });
+    }
+
+    const rawStat = fs.statSync(tempFilePath);
+    const rawDataSize = rawStat.size;
+
+    const finalFilename = `call-rec-${Date.now()}-${Math.round(Math.random() * 1E9)}.wav`;
+    const finalFilePath = path.join(RECORDINGS_DIR, finalFilename);
+
+    const targetSampleRate = parseInt(sampleRate, 10) || 48000;
+    const targetChannels = parseInt(numChannels, 10) || 2;
+    const bytesPerSample = 2; // 16-bit PCM
+    const blockAlign = targetChannels * bytesPerSample; // 4 bytes for stereo
+    const byteRate = targetSampleRate * blockAlign;
+
+    // Create 44-Byte RIFF WAV Header
+    const wavHeader = Buffer.alloc(44);
+    wavHeader.write('RIFF', 0);
+    wavHeader.writeUInt32LE(36 + rawDataSize, 4);
+    wavHeader.write('WAVE', 8);
+    wavHeader.write('fmt ', 12);
+    wavHeader.writeUInt32LE(16, 16);             // Subchunk1Size (16 for PCM)
+    wavHeader.writeUInt16LE(1, 20);              // AudioFormat (1 = Uncompressed PCM)
+    wavHeader.writeUInt16LE(targetChannels, 22); // NumChannels (2)
+    wavHeader.writeUInt32LE(targetSampleRate, 24);// SampleRate
+    wavHeader.writeUInt32LE(byteRate, 28);       // ByteRate
+    wavHeader.writeUInt16LE(blockAlign, 32);     // BlockAlign
+    wavHeader.writeUInt16LE(16, 34);             // BitsPerSample (16)
+    wavHeader.write('data', 36);
+    wavHeader.writeUInt32LE(rawDataSize, 40);
+
+    // Write WAV file: header + raw PCM data
+    const writeStream = fs.createWriteStream(finalFilePath);
+    writeStream.write(wavHeader);
+
+    const readStream = fs.createReadStream(tempFilePath);
+    readStream.pipe(writeStream);
+
+    readStream.on('finish', () => {
+      try { fs.unlinkSync(tempFilePath); } catch (e) {}
+
+      const recordingId = crypto.randomUUID();
+      const recordingEntry = {
+        id: recordingId,
+        filename: finalFilename,
+        originalName: finalFilename,
+        filePath: finalFilePath,
+        fileSize: 44 + rawDataSize,
+        roomId: roomId || 'Unknown Room',
+        hostName: hostName || 'Host',
+        guestName: guestName || 'Guest',
+        duration: parseFloat(duration) || (rawDataSize / byteRate) || 0,
+        sampleRate: targetSampleRate,
+        numChannels: targetChannels,
+        format: 'WAVE uncompressed PCM 16-bit',
+        channelInfo: {
+          left: 'Host / Local Caller',
+          right: 'Guest / Remote Caller'
+        },
+        createdAt: new Date().toISOString()
+      };
+
+      const recordings = getRecordingsMetadata();
+      recordings.unshift(recordingEntry);
+      saveRecordingsMetadata(recordings);
+
+      console.log(`[Stream Finalize Success] Finalized parallel WAV recording ${finalFilename} (${((44 + rawDataSize) / 1024 / 1024).toFixed(2)} MB)`);
+
+      res.json({
+        success: true,
+        message: 'Parallel stream recording finalized successfully.',
+        recording: recordingEntry
+      });
+    });
+
+    readStream.on('error', (err) => {
+      console.error('Error stitching raw stream chunks:', err);
+      res.status(500).json({ success: false, message: 'Error finalizing recording.' });
+    });
+
+  } catch (err) {
+    console.error('Error finalizing stream upload:', err);
+    res.status(500).json({ success: false, message: 'Server error during stream finalization.' });
+  }
 });
 
 // -------------------------------------------------------------
@@ -527,7 +652,6 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
 
       fileStream.pipe(channelTransform).pipe(res);
     }
-
   } catch (err) {
     if (fd !== null) {
       try { fs.closeSync(fd); } catch (e) {}
