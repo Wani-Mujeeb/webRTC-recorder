@@ -156,11 +156,12 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           showToast(`${username} joined the call`, 'success');
         },
-        onUserLeft: ({ username }) => {
+        onUserLeft: ({ username, isExplicitHangup }) => {
           remoteNameDisplay.textContent = 'Peer disconnected';
-          showToast(`${username} left the call`, 'info');
-          // For a 2-person call, when peer leaves, end call and redirect to home page immediately
-          endCallAndSaveRecording();
+          showToast(`${username} disconnected`, 'info');
+          if (isExplicitHangup) {
+            endCallAndSaveRecording();
+          }
         },
         onCallEnded: () => {
           showToast('Call ended by peer', 'info');
@@ -222,7 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
     stopTimer();
     stopVisualizers();
 
-    // Finalize recording on server (takes < 30ms)
+    // Finalize recording on server
     if (wavRecorder && wavRecorder.isRecording) {
       await wavRecorder.stop().catch(err => console.warn('[WAV Stop Error]', err));
       wavRecorder = null;
@@ -233,17 +234,12 @@ document.addEventListener('DOMContentLoaded', () => {
       rtcManager = null;
     }
 
-    // Direct navigation to home page of website
-    const homeUrl = window.location.origin + window.location.pathname;
-    if (window.location.href !== homeUrl) {
-      window.location.href = homeUrl;
-    } else {
-      // If already on base URL, reset lobby view state
-      callView.classList.add('hidden');
-      lobbyView.classList.remove('hidden');
-      remoteNameDisplay.textContent = 'Waiting for peer...';
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
+    // Reset view state to home lobby without forcing hard page reloads
+    callView.classList.add('hidden');
+    lobbyView.classList.remove('hidden');
+    remoteNameDisplay.textContent = 'Waiting for peer...';
+    recStatusText.textContent = 'RECORDING IDLE';
+    window.history.replaceState({}, document.title, window.location.pathname);
   }
 
   // -------------------------------------------------------------

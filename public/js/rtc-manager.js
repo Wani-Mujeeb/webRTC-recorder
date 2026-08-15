@@ -22,16 +22,11 @@ class RTCManager {
     this.onCallEnded = options.onCallEnded || null;
     this.onConnectionStateChange = options.onConnectionStateChange || null;
 
-    // Standard Multi-region STUN configuration
+    // Standard Google STUN configuration (2 servers to prevent discovery lag)
     this.rtcConfig = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        { urls: 'stun:stun.services.mozilla.com:3478' },
-        { urls: 'stun:global.stun.twilio.com:3478' }
+        { urls: 'stun:stun1.l.google.com:19302' }
       ]
     };
   }
@@ -169,14 +164,13 @@ class RTCManager {
 
     this.socket.on('user-disconnected', ({ socketId, username }) => {
       console.log(`[RTC] Peer disconnected: ${username}`);
-      this._closePeerConnection();
-      if (this.onUserLeft) this.onUserLeft({ socketId, username });
+      if (this.onUserLeft) this.onUserLeft({ socketId, username, isExplicitHangup: false });
     });
 
     this.socket.on('call-ended-by-peer', ({ socketId, username }) => {
-      console.log(`[RTC] Peer ended call: ${username}`);
+      console.log(`[RTC] Peer ended call explicitly: ${username}`);
       this._closePeerConnection();
-      if (this.onCallEnded) this.onCallEnded({ socketId, username });
+      if (this.onCallEnded) this.onCallEnded({ socketId, username, isExplicitHangup: true });
     });
   }
 
