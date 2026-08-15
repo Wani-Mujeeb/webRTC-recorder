@@ -42,6 +42,12 @@
   box-sizing: border-box;
 }
 
+svg {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   background-color: var(--bg-dark);
@@ -86,19 +92,42 @@ h1, h2, h3, h4, .font-brand {
 }
 
 .brand-title {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.75rem;
   font-size: 1.35rem;
   font-weight: 700;
-  background: linear-gradient(135deg, #fff 30%, var(--primary) 100%);
+  cursor: pointer;
+  user-select: none;
+  transition: var(--transition-fast);
+}
+
+.brand-logo-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-text-fill-color: initial;
+}
+
+.brand-title-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: linear-gradient(135deg, #ffffff 30%, var(--primary) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-.brand-title svg {
-  color: var(--primary);
+.brand-tag-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent-emerald);
+  -webkit-text-fill-color: var(--accent-emerald);
+  opacity: 0.9;
+  letter-spacing: 0.03em;
 }
 
 .admin-nav-btn {
@@ -981,8 +1010,8 @@ button, input, select, textarea {
 }
 
 @media (max-width: 480px) {
-  .brand-title span span {
-    display: none; /* Hide PRO WAV tag on tiny screens */
+  .brand-tag-badge {
+    display: none; /* Hide PRO WAV / ADMIN PORTAL badge tag on tiny screens */
   }
 
   .feature-badge-row {

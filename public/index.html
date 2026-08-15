@@ -6,19 +6,21 @@
   <title>CallWave - Uncompressed Dual-Channel WAV Call Recorder</title>
   <meta name="description" content="WebRTC audio calling app with automatic dual-channel uncompressed WAV recording and server-secured admin access.">
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/favicon.svg">
 </head>
 <body>
 
   <!-- APP NAVBAR -->
   <header class="app-header">
     <div class="brand-title" id="brand-title-trigger" title="CallWave WAV Recorder (Double-click for Admin Access)">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <svg class="brand-logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
         <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
         <line x1="12" y1="19" x2="12" y2="22"/>
       </svg>
-      <span>CallWave <span style="font-size:0.75rem; font-weight:400; color:var(--accent-emerald); opacity:0.9;">PRO WAV</span></span>
+      <span class="brand-title-text">CallWave <span class="brand-tag-badge">PRO WAV</span></span>
     </div>
 
     <!-- Hidden / Secret Admin Access Trigger (Keyboard shortcut Ctrl+Shift+A or secret lock) -->
@@ -68,7 +70,7 @@
           </div>
 
           <button type="submit" class="btn-primary">
-            <svg width="20" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
             </svg>
             Join Call & Auto-Record
