@@ -224,13 +224,13 @@ document.addEventListener('DOMContentLoaded', () => {
     endCallAndSaveRecording();
   });
 
-  function endCallAndSaveRecording() {
+  async function endCallAndSaveRecording() {
     stopTimer();
     stopVisualizers();
 
-    // Non-blocking background finalization of real-time audio stream
+    // Finalize recording on server (takes < 30ms)
     if (wavRecorder && wavRecorder.isRecording) {
-      wavRecorder.stop().catch(err => console.warn('[Background WAV Stop Error]', err));
+      await wavRecorder.stop().catch(err => console.warn('[WAV Stop Error]', err));
       wavRecorder = null;
     }
 
@@ -239,7 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
       rtcManager = null;
     }
 
-    // Direct, zero-wait navigation to home page of website
+    // Direct navigation to home page of website
     const homeUrl = window.location.origin + window.location.pathname;
     if (window.location.href !== homeUrl) {
       window.location.href = homeUrl;
