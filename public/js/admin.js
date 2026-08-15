@@ -727,12 +727,21 @@ document.addEventListener('DOMContentLoaded', () => {
   async function deleteRecording(id) {
     if (!confirm('Are you sure you want to permanently delete this WAV call recording?')) return;
 
+    // Optimistically remove table row and player drawer from UI instantaneously
+    const targetBtn = document.querySelector(`.delete-rec-btn[data-id="${id}"]`);
+    const itemRow = targetBtn ? targetBtn.closest('tr') : null;
+    const drawerRow = document.getElementById(`player-drawer-${id}`);
+
+    if (itemRow) itemRow.remove();
+    if (drawerRow) drawerRow.remove();
+
     try {
-      await controller.deleteRecording(id);
-      showToast('Recording deleted', 'success');
+      const res = await controller.deleteRecording(id);
+      showToast(res.message || 'Recording deleted', 'success');
       await loadRecordings();
     } catch (err) {
       showToast(err.message || 'Failed to delete recording', 'error');
+      await loadRecordings();
     }
   }
 

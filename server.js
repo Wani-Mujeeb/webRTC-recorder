@@ -200,6 +200,24 @@ class MonoChannelTransform extends Transform {
 // PUBLIC & RECORDING API ENDPOINTS
 // -------------------------------------------------------------
 
+// Helper to generate clear, meaningful filenames based on callers, date, time, and room ID
+function generateMeaningfulFilename(hostName, guestName, roomId) {
+  const safeHost = String(hostName || 'Host').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeGuest = String(guestName || 'Guest').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeRoom = String(roomId || 'Room').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+
+  const timestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+  return `Call_${safeHost}_vs_${safeGuest}_${timestamp}_${safeRoom}.wav`;
+}
+
 // Upload dual-channel uncompressed WAV recording
 app.post('/api/recordings/upload', (req, res) => {
   upload.single('audio')(req, res, (err) => {
@@ -213,12 +231,24 @@ app.post('/api/recordings/upload', (req, res) => {
 
       const { roomId, hostName, guestName, duration, sampleRate, numChannels } = req.body;
       const recordingId = crypto.randomUUID();
+
+      // Rename uploaded file to meaningful name
+      const finalFilename = generateMeaningfulFilename(hostName, guestName, roomId);
+      const finalFilePath = path.join(RECORDINGS_DIR, finalFilename);
+      try {
+        fs.renameSync(req.file.path, finalFilePath);
+      } catch (e) {
+        console.warn('Could not rename uploaded file, retaining original:', e);
+      }
+
+      const actualFilePath = fs.existsSync(finalFilePath) ? finalFilePath : req.file.path;
+      const actualFilename = fs.existsSync(finalFilePath) ? finalFilename : req.file.filename;
       
       const recordingEntry = {
         id: recordingId,
-        filename: req.file.filename,
-        originalName: req.file.originalname || req.file.filename,
-        filePath: req.file.path,
+        filename: actualFilename,
+        originalName: actualFilename,
+        filePath: actualFilePath,
         fileSize: req.file.size,
         roomId: roomId || 'Unknown Room',
         hostName: hostName || 'Host',
@@ -238,7 +268,7 @@ app.post('/api/recordings/upload', (req, res) => {
       recordings.unshift(recordingEntry);
       saveRecordingsMetadata(recordings);
 
-      console.log(`[Upload Success] Saved dual-channel WAV recording ${req.file.filename} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+      console.log(`[Upload Success] Saved dual-channel WAV recording ${actualFilename} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
 
       res.json({
         success: true,
@@ -251,6 +281,7 @@ app.post('/api/recordings/upload', (req, res) => {
     }
   });
 });
+
 // Upload real-time audio chunk in background during active call
 app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet-stream', 'audio/wav', 'audio/pcm'], limit: '20mb' }), (req, res) => {
   try {
@@ -263,6 +294,12 @@ app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet
 
     const safeStreamId = streamId.replace(/[^a-zA-Z0-9-]/g, '');
     const tempFilePath = path.join(RECORDINGS_DIR, `temp-${safeStreamId}.raw`);
+
+    // Reserve 44 bytes at beginning of temp file for instant 0ms header writing on finalization
+    if (!fs.existsSync(tempFilePath)) {
+      const dummyHeader = Buffer.alloc(44);
+      fs.writeFileSync(tempFilePath, dummyHeader);
+    }
 
     fs.appendFileSync(tempFilePath, req.body);
 
@@ -277,7 +314,7 @@ app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet
   }
 });
 
-// Finalize parallel audio stream upload and generate 44-byte WAV header on server
+// Finalize parallel audio stream upload instantly with in-place WAV header update
 app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
   try {
     const { streamId, roomId, hostName, guestName, duration, sampleRate, numChannels } = req.body;
@@ -293,9 +330,10 @@ app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
     }
 
     const rawStat = fs.statSync(tempFilePath);
-    const rawDataSize = rawStat.size;
+    // Raw PCM data size excluding the 44-byte reserved header space
+    const rawDataSize = rawStat.size >= 44 ? rawStat.size - 44 : 0;
 
-    const finalFilename = `call-rec-${Date.now()}-${Math.round(Math.random() * 1E9)}.wav`;
+    const finalFilename = generateMeaningfulFilename(hostName, guestName, roomId);
     const finalFilePath = path.join(RECORDINGS_DIR, finalFilename);
 
     const targetSampleRate = parseInt(sampleRate, 10) || 48000;
@@ -320,53 +358,54 @@ app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
     wavHeader.write('data', 36);
     wavHeader.writeUInt32LE(rawDataSize, 40);
 
-    // Write WAV file: header + raw PCM data
-    const writeStream = fs.createWriteStream(finalFilePath);
-    writeStream.write(wavHeader);
-
-    const readStream = fs.createReadStream(tempFilePath);
-    readStream.pipe(writeStream);
-
-    readStream.on('finish', () => {
-      try { fs.unlinkSync(tempFilePath); } catch (e) {}
-
-      const recordingId = crypto.randomUUID();
-      const recordingEntry = {
-        id: recordingId,
-        filename: finalFilename,
-        originalName: finalFilename,
-        filePath: finalFilePath,
-        fileSize: 44 + rawDataSize,
-        roomId: roomId || 'Unknown Room',
-        hostName: hostName || 'Host',
-        guestName: guestName || 'Guest',
-        duration: parseFloat(duration) || (rawDataSize / byteRate) || 0,
-        sampleRate: targetSampleRate,
-        numChannels: targetChannels,
-        format: 'WAVE uncompressed PCM 16-bit',
-        channelInfo: {
-          left: 'Host / Local Caller',
-          right: 'Guest / Remote Caller'
-        },
-        createdAt: new Date().toISOString()
-      };
-
-      const recordings = getRecordingsMetadata();
-      recordings.unshift(recordingEntry);
-      saveRecordingsMetadata(recordings);
-
-      console.log(`[Stream Finalize Success] Finalized parallel WAV recording ${finalFilename} (${((44 + rawDataSize) / 1024 / 1024).toFixed(2)} MB)`);
-
-      res.json({
-        success: true,
-        message: 'Parallel stream recording finalized successfully.',
-        recording: recordingEntry
+    // Overwrite header in-place at byte offset 0 (0ms disk copy time)
+    try {
+      const fd = fs.openSync(tempFilePath, 'r+');
+      fs.writeSync(fd, wavHeader, 0, 44, 0);
+      fs.closeSync(fd);
+      fs.renameSync(tempFilePath, finalFilePath);
+    } catch (inPlaceErr) {
+      console.warn('In-place header write failed, fallback to file copy:', inPlaceErr);
+      const writeStream = fs.createWriteStream(finalFilePath);
+      writeStream.write(wavHeader);
+      const readStream = fs.createReadStream(tempFilePath, { start: 44 });
+      readStream.pipe(writeStream);
+      readStream.on('finish', () => {
+        try { fs.unlinkSync(tempFilePath); } catch (e) {}
       });
-    });
+    }
 
-    readStream.on('error', (err) => {
-      console.error('Error stitching raw stream chunks:', err);
-      res.status(500).json({ success: false, message: 'Error finalizing recording.' });
+    const recordingId = crypto.randomUUID();
+    const recordingEntry = {
+      id: recordingId,
+      filename: finalFilename,
+      originalName: finalFilename,
+      filePath: finalFilePath,
+      fileSize: 44 + rawDataSize,
+      roomId: roomId || 'Unknown Room',
+      hostName: hostName || 'Host',
+      guestName: guestName || 'Guest',
+      duration: parseFloat(duration) || (rawDataSize / byteRate) || 0,
+      sampleRate: targetSampleRate,
+      numChannels: targetChannels,
+      format: 'WAVE uncompressed PCM 16-bit',
+      channelInfo: {
+        left: 'Host / Local Caller',
+        right: 'Guest / Remote Caller'
+      },
+      createdAt: new Date().toISOString()
+    };
+
+    const recordings = getRecordingsMetadata();
+    recordings.unshift(recordingEntry);
+    saveRecordingsMetadata(recordings);
+
+    console.log(`[Stream Finalize Success] Instantly finalized WAV recording ${finalFilename} (${((44 + rawDataSize) / 1024 / 1024).toFixed(2)} MB)`);
+
+    res.json({
+      success: true,
+      message: 'Parallel stream recording finalized successfully.',
+      recording: recordingEntry
     });
 
   } catch (err) {
@@ -661,31 +700,69 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
   }
 });
 
-// Delete recording (Protected)
+// Delete recording and all recordings associated with that call (Protected)
 app.delete('/api/admin/recordings/:id', requireAdminAuth, (req, res) => {
   const { id } = req.params;
   let recordings = getRecordingsMetadata();
-  const rec = recordings.find(r => r.id === id);
+  const targetRec = recordings.find(r => r.id === id);
 
-  if (!rec) {
+  if (!targetRec) {
     return res.status(404).json({ success: false, message: 'Recording not found.' });
   }
 
-  // Delete file from disk
-  const filePath = path.join(RECORDINGS_DIR, rec.filename);
-  if (fs.existsSync(filePath)) {
-    try {
-      fs.unlinkSync(filePath);
-    } catch (err) {
-      console.error('Failed to delete file from disk:', err);
-    }
-  }
+  // Find all recordings associated with this call (by exact ID or matching non-generic roomId)
+  const targetRoomId = targetRec.roomId;
+  const toDelete = recordings.filter(r => {
+    if (r.id === id) return true;
+    if (targetRoomId && targetRoomId !== 'Unknown Room' && r.roomId === targetRoomId) return true;
+    return false;
+  });
 
-  // Remove from metadata
-  recordings = recordings.filter(r => r.id !== id);
+  const deleteIds = new Set(toDelete.map(r => r.id));
+
+  // Delete all physical audio files associated with the call
+  toDelete.forEach(rec => {
+    const filePathsToDelete = [
+      rec.filePath,
+      path.join(RECORDINGS_DIR, rec.filename)
+    ];
+
+    filePathsToDelete.forEach(fp => {
+      if (fp && fs.existsSync(fp)) {
+        try {
+          fs.unlinkSync(fp);
+          console.log(`[Delete Success] Deleted audio file: ${fp}`);
+        } catch (err) {
+          console.error(`[Delete Warning] Could not unlink ${fp}:`, err.message);
+        }
+      }
+    });
+  });
+
+  // Also clean up any leftover temp files for this room ID or stream
+  try {
+    const files = fs.readdirSync(RECORDINGS_DIR);
+    files.forEach(f => {
+      if (f.startsWith('temp-') && targetRoomId && targetRoomId !== 'Unknown Room' && f.includes(targetRoomId)) {
+        try {
+          fs.unlinkSync(path.join(RECORDINGS_DIR, f));
+        } catch (e) {}
+      }
+    });
+  } catch (e) {}
+
+  // Remove all associated recordings from metadata
+  recordings = recordings.filter(r => !deleteIds.has(r.id));
   saveRecordingsMetadata(recordings);
 
-  res.json({ success: true, message: 'Recording deleted successfully.' });
+  console.log(`[Delete Success] Deleted ${toDelete.length} recording entry/entries associated with call (Room: ${targetRoomId})`);
+
+  res.json({
+    success: true,
+    message: `Deleted ${toDelete.length} recording(s) associated with this call.`,
+    deletedCount: toDelete.length,
+    deletedIds: Array.from(deleteIds)
+  });
 });
 
 // -------------------------------------------------------------

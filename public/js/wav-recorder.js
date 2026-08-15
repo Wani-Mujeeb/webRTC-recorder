@@ -76,10 +76,10 @@ class DualChannelWavRecorder {
       this.sentSampleOffset = 0;
       this.isStreamActive = true;
 
-      // Asynchronously stream audio chunks every 4 seconds in background
+      // Asynchronously stream audio chunks every 1 second in background for near real-time upload
       this.streamTimer = setInterval(() => {
-        this._streamNextChunk().catch(e => console.warn('[WAV Stream Chunk Error]', e));
-      }, 4000);
+        this._streamNextChunk(false).catch(e => console.warn('[WAV Stream Chunk Error]', e));
+      }, 1000);
     }
 
     // Try AudioWorklet first for off-main-thread processing, fallback to ScriptProcessor
@@ -198,7 +198,7 @@ class DualChannelWavRecorder {
 
   /**
    * Stop recording and compile uncompressed WAV file Blob
-   * @returns {Promise<{blob: Blob, duration: number, sampleRate: number, fileSize: number, serverRecording: Object|null}>}
+   * @returns {Promise<{blob: Blob|null, duration: number, sampleRate: number, fileSize: number, serverRecording: Object|null}>}
    */
   async stop() {
     if (!this.isRecording) return null;
@@ -213,7 +213,7 @@ class DualChannelWavRecorder {
 
     // Flush any remaining audio chunk before finalizing stream
     if (this.isStreamActive && this.streamId) {
-      await this._streamNextChunk().catch(e => console.warn('[Final Chunk Stream Error]', e));
+      await this._streamNextChunk(true).catch(e => console.warn('[Final Chunk Stream Error]', e));
     }
 
     // Disconnect audio nodes
@@ -244,7 +244,7 @@ class DualChannelWavRecorder {
       this.audioCtx = null;
     }
 
-    console.log(`[WAV Recorder] Recording stopped. Duration: ${duration.toFixed(2)}s. Compiling WAV file...`);
+    console.log(`[WAV Recorder] Recording stopped. Duration: ${duration.toFixed(2)}s.`);
 
     let serverRecording = null;
     if (this.isStreamActive && this.streamId) {
@@ -253,6 +253,7 @@ class DualChannelWavRecorder {
         const res = await fetch(`${serverUrl}/api/recordings/stream-finalize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
           body: JSON.stringify({
             streamId: this.streamId,
             roomId: this.streamOptions ? this.streamOptions.roomId : 'Room',
@@ -266,14 +267,23 @@ class DualChannelWavRecorder {
         const finalizeJson = await res.json();
         if (finalizeJson.success) {
           serverRecording = finalizeJson.recording;
-          console.log('[WAV Streamer] Call ended & stream finalized instantly in background!');
+          console.log('[WAV Streamer] Call ended & stream finalized instantly on server!');
+          // Fast Return - bypass heavy client-side WAV encoding when server stream finalized successfully!
+          return {
+            blob: null,
+            duration: duration,
+            sampleRate: this.sampleRate,
+            fileSize: serverRecording ? serverRecording.fileSize : 0,
+            numChannels: 2,
+            serverRecording: serverRecording
+          };
         }
       } catch (err) {
         console.warn('[WAV Streamer] Stream finalization failed, fallback to full upload:', err);
       }
     }
 
-    // Flatten left and right Float32 buffers into single continuous arrays
+    // Fallback: Flatten left and right Float32 buffers into single continuous arrays
     const leftBuffer = this._flattenBuffers(this.leftChannelBuffers, this.recordingLength);
     const rightBuffer = this._flattenBuffers(this.rightChannelBuffers, this.recordingLength);
 
@@ -293,15 +303,41 @@ class DualChannelWavRecorder {
 
   /**
    * Non-blocking background chunk streaming
+   * @param {boolean} [force=false] - Force flush all remaining unsent frames
    */
-  async _streamNextChunk() {
+  async _streamNextChunk(force = false) {
     if (!this.isStreamActive || !this.streamId) return;
 
     const currentTotal = this.recordingLength;
     const unsentFrames = currentTotal - this.sentSampleOffset;
 
-    // Send chunk if we have at least 0.25 seconds of unsent audio (12,000 frames)
-    if (unsentFrames < 12000) return;
+    // Send chunk if force is true or if we have at least ~0.05s of unsent audio (2,400 frames)
+    if (!force && unsentFrames < 2400) return;
+    if (unsentFrames <= 0) return;
+
+    const startOffset = this.sentSampleOffset;
+    this.sentSampleOffset = currentTotal;
+
+    const leftSlice = this._sliceBuffer(this.leftChannelBuffers, startOffset, currentTotal);
+    const rightSlice = this._sliceBuffer(this.rightChannelBuffers, startOffset, currentTotal);
+
+    if (!leftSlice || leftSlice.length === 0) return;
+
+    const pcmBuffer = this._encodeRawPCM(leftSlice, rightSlice);
+    const currentChunkIdx = this.chunkIndex++;
+
+    try {
+      const serverUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
+      await fetch(`${serverUrl}/api/recordings/stream-chunk?streamId=${this.streamId}&chunkIndex=${currentChunkIdx}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        keepalive: true,
+        body: pcmBuffer
+      });
+    } catch (err) {
+      console.warn(`[WAV Streamer] Background chunk ${currentChunkIdx} upload failed (will retry/finalize):`, err);
+    }
+  }
 
     const startOffset = this.sentSampleOffset;
     this.sentSampleOffset = currentTotal;

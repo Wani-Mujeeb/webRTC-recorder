@@ -152,10 +152,12 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         onUserLeft: ({ username }) => {
           remoteNameDisplay.textContent = 'Peer disconnected';
-          showToast(`${username} left the call`, 'error');
+          showToast(`${username} left the call`, 'info');
+          // For a 2-person call, when peer leaves, end call and redirect to home page immediately
+          endCallAndSaveRecording();
         },
         onCallEnded: () => {
-          showToast('Call ended by peer', 'error');
+          showToast('Call ended by peer', 'info');
           endCallAndSaveRecording();
         }
       });
@@ -203,20 +205,20 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -------------------------------------------------------------
-  // HANG UP & SAVE RECORDING
+  // HANG UP & SAVE RECORDING (ZERO WAIT & DIRECT HOME PAGE REDIRECT)
   // -------------------------------------------------------------
   btnHangup.addEventListener('click', () => {
     endCallAndSaveRecording();
   });
 
-  async function endCallAndSaveRecording() {
+  function endCallAndSaveRecording() {
     stopTimer();
     stopVisualizers();
 
-    let wavData = null;
+    // Non-blocking background finalization of real-time audio stream
     if (wavRecorder && wavRecorder.isRecording) {
-      recStatusText.textContent = 'SAVING UNCOMPRESSED WAV...';
-      wavData = await wavRecorder.stop();
+      wavRecorder.stop().catch(err => console.warn('[Background WAV Stop Error]', err));
+      wavRecorder = null;
     }
 
     if (rtcManager) {
@@ -224,56 +226,17 @@ document.addEventListener('DOMContentLoaded', () => {
       rtcManager = null;
     }
 
-    if (wavData && wavData.serverRecording) {
-      showToast('Call recording saved instantly!', 'success');
-      recStatusText.textContent = 'RECORDING SAVED';
-      fetchRecordingsList();
-      return;
+    // Direct, zero-wait navigation to home page of website
+    const homeUrl = window.location.origin + window.location.pathname;
+    if (window.location.href !== homeUrl) {
+      window.location.href = homeUrl;
+    } else {
+      // If already on base URL, reset lobby view state
+      callView.classList.add('hidden');
+      lobbyView.classList.remove('hidden');
+      remoteNameDisplay.textContent = 'Waiting for peer...';
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
-
-    if (wavData && wavData.blob) {
-      // Fallback: Full Blob upload to server if parallel streaming was not used
-      const formData = new FormData();
-      formData.append('audio', wavData.blob, `call-${activeRoomId}.wav`);
-      formData.append('roomId', activeRoomId);
-      formData.append('hostName', isHost ? localUsername : remoteUsername);
-      formData.append('guestName', isHost ? remoteUsername : localUsername);
-      formData.append('duration', wavData.duration);
-      formData.append('sampleRate', wavData.sampleRate);
-      formData.append('numChannels', 2);
-
-      showToast('Uploading uncompressed stereo WAV to server...', 'success');
-
-      try {
-        const response = await fetch(`${apiBaseUrl}/api/recordings/upload`, {
-          method: 'POST',
-          body: formData
-        });
-
-        const rawText = await response.text();
-        let resJson;
-        try {
-          resJson = JSON.parse(rawText);
-        } catch (e) {
-          console.error('[Upload Response Error] Received non-JSON response from server:', rawText);
-          throw new Error('Upload size exceeded server limit or proxy error.');
-        }
-
-        if (response.ok && resJson.success) {
-          showToast('Call recording saved securely on server!', 'success');
-        } else {
-          showToast(resJson.message || 'Failed to save recording on server', 'error');
-        }
-      } catch (err) {
-        console.error('Error uploading recording:', err);
-        showToast(err.message || 'Error uploading audio recording', 'error');
-      }
-    }
-
-    // Return to Lobby
-    callView.classList.add('hidden');
-    lobbyView.classList.remove('hidden');
-    remoteNameDisplay.textContent = 'Waiting for peer...';
   }
 
   // -------------------------------------------------------------
@@ -642,12 +605,18 @@ document.addEventListener('DOMContentLoaded', () => {
   async function deleteRecording(id) {
     if (!confirm('Are you sure you want to permanently delete this WAV call recording?')) return;
 
+    // Optimistically remove table row from UI instantaneously
+    const targetBtn = document.querySelector(`.delete-rec-btn[data-id="${id}"]`);
+    const tr = targetBtn ? targetBtn.closest('tr') : null;
+    if (tr) tr.remove();
+
     try {
-      await adminController.deleteRecording(id);
-      showToast('Recording deleted', 'success');
+      const res = await adminController.deleteRecording(id);
+      showToast(res.message || 'Recording deleted', 'success');
       await loadRecordingsList();
     } catch (err) {
       showToast(err.message || 'Failed to delete recording', 'error');
+      await loadRecordingsList();
     }
   }
 
