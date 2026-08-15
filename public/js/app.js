@@ -133,18 +133,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
           setupVisualizers(rtcManager.localStream, remoteStream);
 
-          // Attach remote stream to active recorder or initialize recorder
-          if (wavRecorder && wavRecorder.isRecording) {
-            wavRecorder.attachRemoteStream(remoteStream);
-          } else {
+          // Start dual-channel recording ONLY when peer connects (Host records single consolidated call file)
+          if (isHost && (!wavRecorder || !wavRecorder.isRecording)) {
             wavRecorder = new window.DualChannelWavRecorder();
-            wavRecorder.start(rtcManager.localStream, remoteStream, isHost, visualizerAudioCtx, {
+            wavRecorder.start(rtcManager.localStream, remoteStream, true, visualizerAudioCtx, {
               roomId: activeRoomId,
-              hostName: isHost ? localUsername : remoteUsername,
-              guestName: isHost ? remoteUsername : localUsername
+              hostName: localUsername,
+              guestName: remoteUsername
             });
             recStatusText.textContent = 'RECORDING ACTIVE (WAV 16-bit PCM)';
-            showToast('Dual-channel WAV recording active', 'success');
+            showToast('Peer joined - Dual-channel recording started', 'success');
+          } else {
+            recStatusText.textContent = 'CALL IN PROGRESS (Recorded by Host)';
           }
         },
         onUserJoined: ({ username }) => {
@@ -177,16 +177,10 @@ document.addEventListener('DOMContentLoaded', () => {
       // Start call duration timer
       startTimer();
 
-      // Immediately start WAV recorder upon entering call
-      if (rtcManager.localStream && (!wavRecorder || !wavRecorder.isRecording)) {
+      // Setup local visualizer; recording will start automatically once peer connects
+      recStatusText.textContent = 'WAITING FOR PEER TO JOIN...';
+      if (rtcManager.localStream) {
         setupVisualizers(rtcManager.localStream, null);
-        wavRecorder = new window.DualChannelWavRecorder();
-        wavRecorder.start(rtcManager.localStream, null, isHost, visualizerAudioCtx, {
-          roomId: activeRoomId,
-          hostName: isHost ? localUsername : remoteUsername,
-          guestName: isHost ? remoteUsername : localUsername
-        });
-        recStatusText.textContent = 'RECORDING ACTIVE (WAV 16-bit PCM)';
       }
 
     } catch (err) {

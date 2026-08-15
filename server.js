@@ -287,6 +287,8 @@ app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet
   try {
     const streamId = req.query.streamId || req.headers['x-stream-id'];
     const chunkIndex = parseInt(req.query.chunkIndex || req.headers['x-chunk-index'] || '0', 10);
+    const rawByteOffset = req.query.byteOffset || req.headers['x-chunk-offset'];
+    const byteOffset = rawByteOffset !== undefined ? parseInt(rawByteOffset, 10) : -1;
 
     if (!streamId || !req.body || req.body.length === 0) {
       return res.status(400).json({ success: false, message: 'Invalid chunk data or missing streamId.' });
@@ -301,7 +303,14 @@ app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet
       fs.writeFileSync(tempFilePath, dummyHeader);
     }
 
-    fs.appendFileSync(tempFilePath, req.body);
+    if (byteOffset >= 0) {
+      // Write chunk to exact frame offset in PCM raw audio stream
+      const fd = fs.openSync(tempFilePath, 'r+');
+      fs.writeSync(fd, req.body, 0, req.body.length, 44 + byteOffset);
+      fs.closeSync(fd);
+    } else {
+      fs.appendFileSync(tempFilePath, req.body);
+    }
 
     res.json({
       success: true,

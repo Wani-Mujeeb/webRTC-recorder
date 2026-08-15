@@ -49,11 +49,10 @@ class RTCManager {
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          noiseSuppression: false,
+          autoGainControl: false,
           sampleRate: 48000,
-          channelCount: 1,
-          latency: 0
+          channelCount: 1
         },
         video: false
       });

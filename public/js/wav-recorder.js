@@ -27,6 +27,7 @@ class DualChannelWavRecorder {
     this.streamTimer = null;
     this.streamOptions = null;
     this.isStreamActive = false;
+    this.uploadQueue = Promise.resolve();
   }
 
   /**
@@ -348,7 +349,7 @@ class DualChannelWavRecorder {
   }
 
   /**
-   * Non-blocking background chunk streaming
+   * Non-blocking background chunk streaming (Strictly sequential FIFO upload queue)
    * @param {boolean} [force=false] - Force flush all remaining unsent frames
    */
   async _streamNextChunk(force = false) {
@@ -362,6 +363,8 @@ class DualChannelWavRecorder {
     if (unsentFrames <= 0) return;
 
     const startOffset = this.sentSampleOffset;
+    // 1 frame (stereo 16-bit PCM) = 4 bytes
+    const byteOffset = startOffset * 4;
     this.sentSampleOffset = currentTotal;
 
     const leftSlice = this._sliceBuffer(this.leftChannelBuffers, startOffset, currentTotal);
@@ -372,15 +375,25 @@ class DualChannelWavRecorder {
     const pcmBuffer = this._encodeRawPCM(leftSlice, rightSlice);
     const currentChunkIdx = this.chunkIndex++;
 
-    try {
-      const serverUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
-      await fetch(`${serverUrl}/api/recordings/stream-chunk?streamId=${this.streamId}&chunkIndex=${currentChunkIdx}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: pcmBuffer
-      });
-    } catch (err) {
-      console.warn(`[WAV Streamer] Background chunk ${currentChunkIdx} upload failed (will retry/finalize):`, err);
+    // Enqueue chunk upload in strict sequential order (Chunk N always completes before Chunk N+1)
+    this.uploadQueue = this.uploadQueue.then(async () => {
+      try {
+        const serverUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
+        await fetch(`${serverUrl}/api/recordings/stream-chunk?streamId=${this.streamId}&chunkIndex=${currentChunkIdx}&byteOffset=${byteOffset}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'x-chunk-offset': String(byteOffset)
+          },
+          body: pcmBuffer
+        });
+      } catch (err) {
+        console.warn(`[WAV Streamer] Sequential chunk ${currentChunkIdx} upload error:`, err);
+      }
+    });
+
+    if (force) {
+      await this.uploadQueue;
     }
   }
 
