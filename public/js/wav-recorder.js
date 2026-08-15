@@ -302,6 +302,27 @@ class DualChannelWavRecorder {
   }
 
   /**
+   * Dynamically attach remote WebRTC stream to right audio channel
+   */
+  attachRemoteStream(remoteStream) {
+    if (!this.audioCtx || !remoteStream || remoteStream.getAudioTracks().length === 0) return;
+    if (this.remoteSource) return;
+
+    try {
+      this.remoteSource = this.audioCtx.createMediaStreamSource(remoteStream);
+      const guestInputIdx = this.isHost ? 1 : 0;
+      if (this.workletNode) {
+        this.remoteSource.connect(this.workletNode, 0, guestInputIdx);
+      } else if (this.mergerNode) {
+        this.remoteSource.connect(this.mergerNode, 0, guestInputIdx);
+      }
+      console.log('[WAV Recorder] Dynamically attached remote stream to channel 2');
+    } catch (err) {
+      console.warn('[WAV Recorder] Error attaching remote stream:', err);
+    }
+  }
+
+  /**
    * Non-blocking background chunk streaming
    * @param {boolean} [force=false] - Force flush all remaining unsent frames
    */
@@ -332,29 +353,6 @@ class DualChannelWavRecorder {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         keepalive: true,
-        body: pcmBuffer
-      });
-    } catch (err) {
-      console.warn(`[WAV Streamer] Background chunk ${currentChunkIdx} upload failed (will retry/finalize):`, err);
-    }
-  }
-
-    const startOffset = this.sentSampleOffset;
-    this.sentSampleOffset = currentTotal;
-
-    const leftSlice = this._sliceBuffer(this.leftChannelBuffers, startOffset, currentTotal);
-    const rightSlice = this._sliceBuffer(this.rightChannelBuffers, startOffset, currentTotal);
-
-    if (!leftSlice || leftSlice.length === 0) return;
-
-    const pcmBuffer = this._encodeRawPCM(leftSlice, rightSlice);
-    const currentChunkIdx = this.chunkIndex++;
-
-    try {
-      const serverUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
-      await fetch(`${serverUrl}/api/recordings/stream-chunk?streamId=${this.streamId}&chunkIndex=${currentChunkIdx}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
         body: pcmBuffer
       });
     } catch (err) {

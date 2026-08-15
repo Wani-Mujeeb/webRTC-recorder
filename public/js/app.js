@@ -133,8 +133,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
           setupVisualizers(rtcManager.localStream, remoteStream);
 
-          // Auto-start recording as soon as both streams are present
-          if (!wavRecorder || !wavRecorder.isRecording) {
+          // Attach remote stream to active recorder or initialize recorder
+          if (wavRecorder && wavRecorder.isRecording) {
+            wavRecorder.attachRemoteStream(remoteStream);
+          } else {
             wavRecorder = new window.DualChannelWavRecorder();
             wavRecorder.start(rtcManager.localStream, remoteStream, isHost, visualizerAudioCtx, {
               roomId: activeRoomId,
@@ -142,12 +144,16 @@ document.addEventListener('DOMContentLoaded', () => {
               guestName: isHost ? remoteUsername : localUsername
             });
             recStatusText.textContent = 'RECORDING ACTIVE (WAV 16-bit PCM)';
-            showToast('Dual-channel WAV recording & parallel stream upload active', 'success');
+            showToast('Dual-channel WAV recording active', 'success');
           }
         },
         onUserJoined: ({ username }) => {
           remoteUsername = username;
           remoteNameDisplay.textContent = username;
+          if (wavRecorder && wavRecorder.streamOptions) {
+            wavRecorder.streamOptions.hostName = isHost ? localUsername : username;
+            wavRecorder.streamOptions.guestName = isHost ? username : localUsername;
+          }
           showToast(`${username} joined the call`, 'success');
         },
         onUserLeft: ({ username }) => {
@@ -171,9 +177,16 @@ document.addEventListener('DOMContentLoaded', () => {
       // Start call duration timer
       startTimer();
 
-      // If initial local stream is ready, set up local visualizer
-      if (rtcManager.localStream) {
+      // Immediately start WAV recorder upon entering call
+      if (rtcManager.localStream && (!wavRecorder || !wavRecorder.isRecording)) {
         setupVisualizers(rtcManager.localStream, null);
+        wavRecorder = new window.DualChannelWavRecorder();
+        wavRecorder.start(rtcManager.localStream, null, isHost, visualizerAudioCtx, {
+          roomId: activeRoomId,
+          hostName: isHost ? localUsername : remoteUsername,
+          guestName: isHost ? remoteUsername : localUsername
+        });
+        recStatusText.textContent = 'RECORDING ACTIVE (WAV 16-bit PCM)';
       }
 
     } catch (err) {
