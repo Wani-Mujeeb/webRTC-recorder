@@ -263,10 +263,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (refreshBtn) {
-    refreshBtn.addEventListener('click', loadRecordings);
+    refreshBtn.addEventListener('click', async () => {
+      await loadRecordings(true);
+    });
   }
 
-  async function loadRecordings() {
+  async function loadRecordings(isManual = false) {
+    if (refreshBtn) {
+      refreshBtn.classList.add('is-loading');
+      refreshBtn.disabled = true;
+    }
+
     try {
       const recordings = await controller.fetchRecordings();
       recordingsTableBody.innerHTML = '';
@@ -275,6 +282,9 @@ document.addEventListener('DOMContentLoaded', () => {
         emptyState.style.display = 'block';
         emptyState.classList.remove('hidden');
         recordingsTableBody.parentElement.classList.add('hidden');
+        if (isManual) {
+          showToast('Recordings list updated (0 recordings found)', 'info');
+        }
         return;
       }
 
@@ -504,9 +514,20 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
 
+      if (isManual) {
+        showToast(`Recordings list refreshed (${recordings.length} calls found)`, 'success');
+      }
+
     } catch (err) {
       console.error('Error loading recordings:', err);
       showToast(err.message || 'Failed to load recordings', 'error');
+    } finally {
+      if (refreshBtn) {
+        setTimeout(() => {
+          refreshBtn.classList.remove('is-loading');
+          refreshBtn.disabled = false;
+        }, 350);
+      }
     }
   }
 

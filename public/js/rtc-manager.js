@@ -44,9 +44,8 @@ class RTCManager {
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 48000,
+          noiseSuppression: true,
+          autoGainControl: true,
           channelCount: 1
         },
         video: false
@@ -314,35 +313,49 @@ class RTCManager {
   }
 
   /**
-   * Optimize WebRTC Opus SDP for maximum 48kHz bitrate, disabling DTX silence cuts
+   * Optimize WebRTC Opus SDP for resilient, smooth broadcast-quality 48kHz audio
+   * Configures 20ms frame pacing, inband FEC, DTX disabled, and optimal bitrate
    */
   _optimizeOpusSDP(sdp) {
     if (!sdp) return sdp;
     let lines = sdp.split('\r\n');
     let opusPayloadType = null;
+    let rtpmapIndex = -1;
 
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].includes('a=rtpmap:') && lines[i].toLowerCase().includes('opus/48000')) {
         const match = lines[i].match(/a=rtpmap:(\d+)\s+opus\/48000/i);
         if (match) {
           opusPayloadType = match[1];
+          rtpmapIndex = i;
         }
       }
     }
 
     if (opusPayloadType) {
+      let fmtpFound = false;
+      const cleanParams = [
+        'minptime=20',
+        'ptime=20',
+        'maxptime=40',
+        'useinbandfec=1',
+        'usedtx=0',
+        'maxaveragebitrate=128000',
+        'cbr=0',
+        'stereo=1',
+        'sprop-stereo=1',
+        'maxplaybackrate=48000',
+        'sprop-maxcapturerate=48000'
+      ];
+
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].startsWith(`a=fmtp:${opusPayloadType}`)) {
-          let fmtp = lines[i];
-          if (!fmtp.includes('minptime=')) fmtp += ';minptime=10';
-          if (!fmtp.includes('useinbandfec=')) fmtp += ';useinbandfec=1';
-          if (!fmtp.includes('usedtx=')) fmtp += ';usedtx=0';
-          if (!fmtp.includes('maxaveragebitrate=')) fmtp += ';maxaveragebitrate=510000';
-          if (!fmtp.includes('cbr=')) fmtp += ';cbr=1';
-          if (!fmtp.includes('maxplaybackrate=')) fmtp += ';maxplaybackrate=48000';
-          if (!fmtp.includes('sprop-maxcapturerate=')) fmtp += ';sprop-maxcapturerate=48000';
-          lines[i] = fmtp;
+          fmtpFound = true;
+          lines[i] = `a=fmtp:${opusPayloadType} ${cleanParams.join(';')}`;
         }
+      }
+      if (!fmtpFound && rtpmapIndex !== -1) {
+        lines.splice(rtpmapIndex + 1, 0, `a=fmtp:${opusPayloadType} ${cleanParams.join(';')}`);
       }
     }
     return lines.join('\r\n');

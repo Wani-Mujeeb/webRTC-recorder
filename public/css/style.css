@@ -1478,6 +1478,21 @@ audio {
   display: none !important;
 }
 
+/* Refresh Button Animation & States */
+@keyframes spinIcon {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
 
+.spin svg,
+svg.spin,
+.btn-action-icon.is-loading svg {
+  animation: spinIcon 0.8s linear infinite;
+  transform-origin: center center;
+}
 
-
+.btn-action-icon:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  pointer-events: none;
+}

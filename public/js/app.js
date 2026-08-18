@@ -221,18 +221,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function endCallAndSaveRecording() {
     stopTimer();
-    stopVisualizers();
 
-    // Finalize recording on server
+    // 1. Finalize and save recording on server first while AudioContext is still alive
     if (wavRecorder && wavRecorder.isRecording) {
       await wavRecorder.stop().catch(err => console.warn('[WAV Stop Error]', err));
       wavRecorder = null;
     }
 
+    // 2. Disconnect WebRTC connection
     if (rtcManager) {
       rtcManager.leaveCall();
       rtcManager = null;
     }
+
+    // 3. Clean up visualizers and audio context
+    stopVisualizers();
 
     // Reset view state to home lobby without forcing hard page reloads
     callView.classList.add('hidden');
