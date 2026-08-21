@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CallWave Admin Portal - Call Recordings Management</title>
   <meta name="description" content="Secure Admin Recording Repository and Split-Channel WAV Audio Player.">
-  <link rel="stylesheet" href="/css/style.css?v=2.1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
@@ -21,18 +22,16 @@
   <!-- ADMIN NAVBAR -->
   <header class="app-header">
     <div class="brand-title">
-      <svg class="brand-logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <svg class="brand-logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </svg>
       <span class="brand-title-text">CallWave <span class="brand-tag-badge">ADMIN PORTAL</span></span>
     </div>
 
-    <div id="admin-user-nav" class="hidden" style="display:flex; gap:0.75rem; align-items:center;">
-      <span class="feature-tag" style="background:rgba(99,102,241,0.15); border-color:rgba(99,102,241,0.3); color:#c7d2fe;">
-        Server Authenticated
-      </span>
-      <button id="admin-logout-btn" class="btn-action-icon danger">Logout</button>
+    <div id="admin-user-nav" class="admin-nav-user hidden">
+      <span class="feature-tag">Server Authenticated</span>
+      <button id="admin-logout-btn" class="btn-action-icon danger" aria-label="Log out of Admin Portal">Logout</button>
     </div>
   </header>
 
@@ -44,7 +43,7 @@
       <div class="glass-panel lobby-card" style="max-width:440px; margin:0 auto;">
         <div class="lobby-header">
           <div style="width:52px; height:52px; border-radius:50%; background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 1rem; color:var(--primary);">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           </div>
           <h2>Admin Authentication</h2>
           <p>Passcode is validated strictly on the Node.js server.</p>
@@ -53,9 +52,9 @@
         <form id="admin-login-form">
           <div class="form-group">
             <label for="admin-passcode">Admin Passcode</label>
-            <input type="password" id="admin-passcode" class="form-control" placeholder="Enter admin passcode" required autofocus>
+            <input type="password" id="admin-passcode" class="form-control" placeholder="Enter admin passcode" required autofocus autocomplete="current-password">
           </div>
-          <div id="login-error-msg" style="color:var(--accent-rose); font-size:0.85rem; margin-bottom:1rem;" class="hidden"></div>
+          <div id="login-error-msg" style="color:var(--accent-rose); font-size:0.85rem; margin-bottom:1rem;" class="hidden" role="alert"></div>
           <button type="submit" class="btn-primary">Unlock Recordings Portal</button>
         </form>
       </div>
@@ -67,11 +66,11 @@
         
         <div class="call-status-bar" style="border-bottom:1px solid var(--border-glass); padding-bottom:1rem; margin-bottom:1.5rem;">
           <div style="display:flex; align-items:center; gap:0.75rem;">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <h3 style="font-size:1.4rem; font-weight:700;">Call Recordings Repository</h3>
           </div>
-          <button id="refresh-recordings-btn" class="btn-action-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <button id="refresh-recordings-btn" class="btn-action-icon" aria-label="Refresh list of call recordings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             Refresh List
           </button>
         </div>
@@ -81,13 +80,13 @@
           <table class="recordings-table">
             <thead>
               <tr>
-                <th>Call Date & Time</th>
-                <th>Room ID</th>
-                <th>Channel 1 (Host)</th>
-                <th>Channel 2 (Guest)</th>
-                <th>Duration</th>
-                <th>File Size</th>
-                <th>Audio Actions</th>
+                <th scope="col">Call Date &amp; Time</th>
+                <th scope="col">Room ID</th>
+                <th scope="col">Channel 1 (Host)</th>
+                <th scope="col">Channel 2 (Guest)</th>
+                <th scope="col">Duration</th>
+                <th scope="col">File Size</th>
+                <th scope="col">Audio Actions</th>
               </tr>
             </thead>
             <tbody id="recordings-table-body">
@@ -97,11 +96,9 @@
         </div>
 
         <div id="admin-empty-state" class="empty-state hidden">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           <p>No recorded calls found on server.</p>
         </div>
-
-        <!-- Inline audio player is generated dynamically beneath each recording item -->
 
       </div>
     </section>
@@ -113,9 +110,9 @@
   </footer>
 
   <!-- TOAST CONTAINER -->
-  <div id="toast-container" class="toast-container"></div>
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- SCRIPTS -->
-  <script src="/js/admin.js?v=2.1"></script>
+  <script src="/js/admin.js"></script>
 </body>
 </html>

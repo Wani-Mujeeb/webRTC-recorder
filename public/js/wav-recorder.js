@@ -8,9 +8,12 @@
  *  - Real-time DC Blocking Filter (removes DC offset, subsonic rumble, and pops)
  *  - Smooth Anti-Click micro-ramping on stream start/attachment
  *  - Precision 16-bit PCM quantization with soft-saturation limiting
- *  - Streamlined background chunk delta uploading
+ *  - Streamlined background chunk delta uploading with auto-cleanup
  */
 class DualChannelWavRecorder {
+  // Static set to track AudioContexts where the worklet module is already registered
+  static registeredContexts = new WeakSet();
+
   constructor() {
     this.audioCtx = null;
     this.ownsAudioCtx = false;
@@ -64,7 +67,7 @@ class DualChannelWavRecorder {
     }
 
     if (this.audioCtx.state === 'suspended') {
-      await this.audioCtx.resume();
+      try { await this.audioCtx.resume(); } catch (e) {}
     }
     this.sampleRate = this.audioCtx.sampleRate || 48000;
 
@@ -90,82 +93,87 @@ class DualChannelWavRecorder {
     let workletSuccess = false;
     if (this.audioCtx.audioWorklet) {
       try {
-        const workletCode = `
-          class DualChannelProcessor extends AudioWorkletProcessor {
-            constructor() {
-              super();
-              this.BLOCK_SIZE = 2048; // Buffer ~42.6ms at 48kHz for smooth low-overhead IPC
-              this.leftAcc = new Float32Array(this.BLOCK_SIZE);
-              this.rightAcc = new Float32Array(this.BLOCK_SIZE);
-              this.accIndex = 0;
+        if (!DualChannelWavRecorder.registeredContexts.has(this.audioCtx)) {
+          const workletCode = `
+            class DualChannelProcessor extends AudioWorkletProcessor {
+              constructor() {
+                super();
+                this.BLOCK_SIZE = 2048; // Buffer ~42.6ms at 48kHz for smooth low-overhead IPC
+                this.leftAcc = new Float32Array(this.BLOCK_SIZE);
+                this.rightAcc = new Float32Array(this.BLOCK_SIZE);
+                this.accIndex = 0;
 
-              // 1-pole DC blocker states (High-Pass ~20Hz cutoff to eliminate DC bias pops)
-              this.dcX0 = 0; this.dcY0 = 0;
-              this.dcX1 = 0; this.dcY1 = 0;
-              this.dcR = 0.995;
+                // 1-pole DC blocker states (High-Pass ~20Hz cutoff to eliminate DC bias pops)
+                this.dcX0 = 0; this.dcY0 = 0;
+                this.dcX1 = 0; this.dcY1 = 0;
+                this.dcR = 0.995;
 
-              // Anti-pop smooth fade-in ramp (first 2400 samples = ~50ms)
-              this.rampSamples = 2400;
-              this.sampleCounter = 0;
-            }
-
-            process(inputs) {
-              const in0 = inputs[0];
-              const in1 = inputs[1];
-
-              const ch0 = (in0 && in0.length > 0) ? in0[0] : null;
-              const ch1 = (in1 && in1.length > 0) ? in1[0] : null;
-
-              const len = ch0 ? ch0.length : (ch1 ? ch1.length : 128);
-
-              for (let i = 0; i < len; i++) {
-                let raw0 = ch0 ? ch0[i] : 0;
-                let raw1 = ch1 ? ch1[i] : 0;
-
-                // Sanitize non-finite values
-                if (isNaN(raw0) || !isFinite(raw0)) raw0 = 0;
-                if (isNaN(raw1) || !isFinite(raw1)) raw1 = 0;
-
-                // Apply real-time DC Blocking Filter (removes DC thumps/clicks)
-                const y0 = raw0 - this.dcX0 + this.dcR * this.dcY0;
-                this.dcX0 = raw0;
-                this.dcY0 = y0;
-
-                const y1 = raw1 - this.dcX1 + this.dcR * this.dcY1;
-                this.dcX1 = raw1;
-                this.dcY1 = y1;
-
-                // Smooth startup fade-in ramp to eliminate initial pop
-                let gain = 1.0;
-                if (this.sampleCounter < this.rampSamples) {
-                  gain = this.sampleCounter / this.rampSamples;
-                  this.sampleCounter++;
-                }
-
-                this.leftAcc[this.accIndex] = y0 * gain;
-                this.rightAcc[this.accIndex] = y1 * gain;
-                this.accIndex++;
-
-                // When 2048-sample block is filled, transfer to main thread
-                if (this.accIndex >= this.BLOCK_SIZE) {
-                  const leftOut = new Float32Array(this.leftAcc);
-                  const rightOut = new Float32Array(this.rightAcc);
-                  this.port.postMessage(
-                    { left: leftOut, right: rightOut },
-                    [leftOut.buffer, rightOut.buffer]
-                  );
-                  this.accIndex = 0;
-                }
+                // Anti-pop smooth fade-in ramp (first 2400 samples = ~50ms)
+                this.rampSamples = 2400;
+                this.sampleCounter = 0;
               }
-              return true;
+
+              process(inputs) {
+                const in0 = inputs[0];
+                const in1 = inputs[1];
+
+                const ch0 = (in0 && in0.length > 0) ? in0[0] : null;
+                const ch1 = (in1 && in1.length > 0) ? in1[0] : null;
+
+                const len = ch0 ? ch0.length : (ch1 ? ch1.length : 128);
+
+                for (let i = 0; i < len; i++) {
+                  let raw0 = ch0 ? ch0[i] : 0;
+                  let raw1 = ch1 ? ch1[i] : 0;
+
+                  // Sanitize non-finite values
+                  if (isNaN(raw0) || !isFinite(raw0)) raw0 = 0;
+                  if (isNaN(raw1) || !isFinite(raw1)) raw1 = 0;
+
+                  // Apply real-time DC Blocking Filter (removes DC thumps/clicks)
+                  const y0 = raw0 - this.dcX0 + this.dcR * this.dcY0;
+                  this.dcX0 = raw0;
+                  this.dcY0 = y0;
+
+                  const y1 = raw1 - this.dcX1 + this.dcR * this.dcY1;
+                  this.dcX1 = raw1;
+                  this.dcY1 = y1;
+
+                  // Smooth startup fade-in ramp to eliminate initial pop
+                  let gain = 1.0;
+                  if (this.sampleCounter < this.rampSamples) {
+                    gain = this.sampleCounter / this.rampSamples;
+                    this.sampleCounter++;
+                  }
+
+                  this.leftAcc[this.accIndex] = y0 * gain;
+                  this.rightAcc[this.accIndex] = y1 * gain;
+                  this.accIndex++;
+
+                  // When 2048-sample block is filled, transfer to main thread
+                  if (this.accIndex >= this.BLOCK_SIZE) {
+                    const leftOut = new Float32Array(this.leftAcc);
+                    const rightOut = new Float32Array(this.rightAcc);
+                    this.port.postMessage(
+                      { left: leftOut, right: rightOut },
+                      [leftOut.buffer, rightOut.buffer]
+                    );
+                    this.accIndex = 0;
+                  }
+                }
+                return true;
+              }
             }
-          }
-          registerProcessor('dual-channel-processor', DualChannelProcessor);
-        `;
-        const blob = new Blob([workletCode], { type: 'application/javascript' });
-        const workletUrl = URL.createObjectURL(blob);
-        await this.audioCtx.audioWorklet.addModule(workletUrl);
-        URL.revokeObjectURL(workletUrl);
+            try {
+              registerProcessor('dual-channel-processor', DualChannelProcessor);
+            } catch (e) {}
+          `;
+          const blob = new Blob([workletCode], { type: 'application/javascript' });
+          const workletUrl = URL.createObjectURL(blob);
+          await this.audioCtx.audioWorklet.addModule(workletUrl);
+          URL.revokeObjectURL(workletUrl);
+          DualChannelWavRecorder.registeredContexts.add(this.audioCtx);
+        }
 
         this.workletNode = new AudioWorkletNode(this.audioCtx, 'dual-channel-processor', {
           numberOfInputs: 2,
@@ -226,6 +234,8 @@ class DualChannelWavRecorder {
 
       let dcX0 = 0, dcY0 = 0, dcX1 = 0, dcY1 = 0;
       const dcR = 0.995;
+      let sampleCounter = 0;
+      const rampSamples = 2400;
 
       this.processorNode.onaudioprocess = (e) => {
         if (!this.isRecording) return;
@@ -249,8 +259,14 @@ class DualChannelWavRecorder {
           const y1 = s1 - dcX1 + dcR * dcY1;
           dcX1 = s1; dcY1 = y1;
 
-          leftClean[i] = y0;
-          rightClean[i] = y1;
+          let gain = 1.0;
+          if (sampleCounter < rampSamples) {
+            gain = sampleCounter / rampSamples;
+            sampleCounter++;
+          }
+
+          leftClean[i] = y0 * gain;
+          rightClean[i] = y1 * gain;
         }
 
         this.leftChannelBuffers.push(leftClean);
@@ -328,15 +344,19 @@ class DualChannelWavRecorder {
     console.log(`[WAV Recorder] Recording stopped. Duration: ${duration.toFixed(2)}s. Total Frames: ${this.recordingLength}`);
 
     // Compile pristine in-memory WAV buffer
-    const leftBuffer = this._flattenBuffers(this.leftChannelBuffers, this.recordingLength);
-    const rightBuffer = this._flattenBuffers(this.rightChannelBuffers, this.recordingLength);
+    const leftBuffer = this._flattenBuffers(this.leftChannelBuffers);
+    const rightBuffer = this._flattenBuffers(this.rightChannelBuffers);
     const wavBuffer = this._encodeWAV(leftBuffer, rightBuffer, this.sampleRate);
     const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+
+    // Release buffer arrays to prevent memory leak
+    this.leftChannelBuffers = [];
+    this.rightChannelBuffers = [];
 
     let serverRecording = null;
     const serverUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
 
-    // Direct, reliable final upload of the master lossless WAV file
+    // Direct, reliable final upload of the master lossless WAV file (passing streamId for server temp cleanup)
     try {
       const formData = new FormData();
       formData.append('audio', wavBlob, `call-${this.streamOptions ? this.streamOptions.roomId : 'rec'}.wav`);
@@ -346,6 +366,9 @@ class DualChannelWavRecorder {
       formData.append('duration', duration);
       formData.append('sampleRate', this.sampleRate);
       formData.append('numChannels', 2);
+      if (this.streamId) {
+        formData.append('streamId', this.streamId);
+      }
 
       const upRes = await fetch(`${serverUrl}/api/recordings/upload`, {
         method: 'POST',
@@ -500,7 +523,7 @@ class DualChannelWavRecorder {
     let offset = 0;
     for (let i = 0; i < length; i++) {
       let lVal = leftChannel[i];
-      let rVal = rightChannel ? (rightChannel[i] || 0) : 0;
+      let rVal = rightChannel && i < rightChannel.length ? rightChannel[i] : 0;
 
       if (isNaN(lVal) || !isFinite(lVal)) lVal = 0;
       if (isNaN(rVal) || !isFinite(rVal)) rVal = 0;
@@ -523,8 +546,9 @@ class DualChannelWavRecorder {
   /**
    * Flatten array of Float32Array chunks into a single Float32Array
    */
-  _flattenBuffers(channelBuffers, recordingLength) {
-    const result = new Float32Array(recordingLength);
+  _flattenBuffers(channelBuffers) {
+    const totalLength = channelBuffers.reduce((acc, b) => acc + b.length, 0);
+    const result = new Float32Array(totalLength);
     let offset = 0;
     for (let i = 0; i < channelBuffers.length; i++) {
       result.set(channelBuffers[i], offset);
@@ -540,7 +564,7 @@ class DualChannelWavRecorder {
     const numChannels = 2;
     const bytesPerSample = 2; // 16-bit PCM = 2 bytes
     const blockAlign = numChannels * bytesPerSample; // 4 bytes
-    const length = leftChannel.length;
+    const length = Math.max(leftChannel.length, rightChannel ? rightChannel.length : 0);
     const dataSize = length * blockAlign;
     const buffer = new ArrayBuffer(44 + dataSize);
     const view = new DataView(buffer);
@@ -567,8 +591,8 @@ class DualChannelWavRecorder {
     // Interleave left and right Float32 samples and convert to 16-bit PCM Signed Integer (-32768 to 32767)
     let offset = 44;
     for (let i = 0; i < length; i++) {
-      let lVal = leftChannel[i];
-      let rVal = rightChannel ? (rightChannel[i] || 0) : 0;
+      let lVal = i < leftChannel.length ? leftChannel[i] : 0;
+      let rVal = rightChannel && i < rightChannel.length ? rightChannel[i] : 0;
 
       if (isNaN(lVal) || !isFinite(lVal)) lVal = 0;
       if (isNaN(rVal) || !isFinite(rVal)) rVal = 0;

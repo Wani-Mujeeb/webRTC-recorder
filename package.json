@@ -1,11 +1,16 @@
 {
-  "name": "call-recorder-app",
+  "name": "callwave-recorder",
   "version": "1.0.0",
-  "description": "Dual-channel uncompressed WAV call recorder web app with secure admin dashboard",
+  "description": "Dual-channel uncompressed WAV call recorder web app with server-secured admin dashboard",
   "main": "server.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node test/verification.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

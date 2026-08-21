@@ -1,8 +1,10 @@
 node_modules
-npm-debug.log
-recordings/*
-!recordings/.gitkeep
-data/*
-!data/.gitkeep
+recordings/*.wav
+recordings/temp-*.raw
+data/recordings.json
 .git
+.gitignore
 .env
+.env.*
+*.log
+npm-debug.log*

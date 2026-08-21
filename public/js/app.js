@@ -1,10 +1,8 @@
 /**
  * App Controller
- * Glues UI, WebRTC Manager, Dual-Channel WAV Recorder, Visualizers, and Admin Portal together.
+ * Glues UI, WebRTC Manager, Dual-Channel WAV Recorder, and Visualizers together.
  */
 document.addEventListener('DOMContentLoaded', () => {
-  const apiBaseUrl = window.location.protocol === 'file:' ? 'http://localhost:3000' : '';
-  
   // UI Elements
   const lobbyView = document.getElementById('lobby-view');
   const callView = document.getElementById('call-view');
@@ -31,25 +29,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const vuFillLeft = document.getElementById('vu-fill-left');
   const vuFillRight = document.getElementById('vu-fill-right');
 
-  // Admin Modals
+  // Secret admin trigger
   const navAdminBtn = document.getElementById('nav-admin-btn');
-  const adminLoginModal = document.getElementById('admin-login-modal');
-  const adminLoginForm = document.getElementById('admin-login-form');
-  const adminPasscode = document.getElementById('admin-passcode');
-  const loginErrorMsg = document.getElementById('login-error-msg');
-  const adminDashboardModal = document.getElementById('admin-dashboard-modal');
-  const adminLogoutBtn = document.getElementById('admin-logout-btn');
-  const recordingsTableBody = document.getElementById('recordings-table-body');
-  const adminEmptyState = document.getElementById('admin-empty-state');
-  const adminAudioPlayerCard = document.getElementById('admin-audio-player-card');
-  const adminAudioElement = document.getElementById('admin-audio-element');
-  const playerTitle = document.getElementById('player-title');
-  const playerSubtext = document.getElementById('player-subtext');
+  const brandTitleTrigger = document.getElementById('brand-title-trigger');
+  const secretAdminTrigger = document.getElementById('secret-admin-trigger');
 
-  // Controllers
-  const adminController = new window.AdminPortalController();
+  // State
   let rtcManager = null;
   let wavRecorder = null;
+  let isEndingCall = false;
   
   let timerInterval = null;
   let secondsElapsed = 0;
@@ -101,6 +89,8 @@ document.addEventListener('DOMContentLoaded', () => {
     localNameDisplay.textContent = `${localUsername} (${isHost ? 'Host' : 'Guest'})`;
 
     try {
+      isEndingCall = false;
+
       // Initialize WebRTC Manager
       rtcManager = new window.RTCManager({
         onRemoteStreamAdded: (remoteStream) => {
@@ -133,8 +123,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
           setupVisualizers(rtcManager.localStream, remoteStream);
 
-          // Start dual-channel recording ONLY when peer connects (Host records single consolidated call file)
-          if (isHost && (!wavRecorder || !wavRecorder.isRecording)) {
+          // If recorder is already active, attach remote stream dynamically
+          if (wavRecorder && wavRecorder.isRecording) {
+            wavRecorder.attachRemoteStream(remoteStream);
+          } else if (isHost && (!wavRecorder || !wavRecorder.isRecording)) {
+            // Start dual-channel recording when peer connects
             wavRecorder = new window.DualChannelWavRecorder();
             wavRecorder.start(rtcManager.localStream, remoteStream, true, visualizerAudioCtx, {
               roomId: activeRoomId,
@@ -175,6 +168,9 @@ document.addEventListener('DOMContentLoaded', () => {
       lobbyView.classList.add('hidden');
       callView.classList.remove('hidden');
 
+      // Update canvas dimensions in next animation frame once layout has calculated
+      requestAnimationFrame(updateCanvasDimensions);
+
       // Start call duration timer
       startTimer();
 
@@ -195,9 +191,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   copyLinkBtn.addEventListener('click', () => {
     shareLinkInput.select();
-    navigator.clipboard.writeText(shareLinkInput.value);
-    showToast('Call link copied to clipboard!', 'success');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(shareLinkInput.value)
+        .then(() => showToast('Call link copied to clipboard!', 'success'))
+        .catch(() => fallbackCopy());
+    } else {
+      fallbackCopy();
+    }
   });
+
+  function fallbackCopy() {
+    try {
+      shareLinkInput.select();
+      document.execCommand('copy');
+      showToast('Call link copied to clipboard!', 'success');
+    } catch (err) {
+      showToast('Please copy the URL manually', 'info');
+    }
+  }
 
   // -------------------------------------------------------------
   // MUTE TOGGLE
@@ -213,18 +224,25 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // -------------------------------------------------------------
-  // HANG UP & SAVE RECORDING (ZERO WAIT & DIRECT HOME PAGE REDIRECT)
+  // HANG UP & SAVE RECORDING
   // -------------------------------------------------------------
   btnHangup.addEventListener('click', () => {
     endCallAndSaveRecording();
   });
 
   async function endCallAndSaveRecording() {
+    if (isEndingCall) return;
+    isEndingCall = true;
+
     stopTimer();
 
     // 1. Finalize and save recording on server first while AudioContext is still alive
     if (wavRecorder && wavRecorder.isRecording) {
-      await wavRecorder.stop().catch(err => console.warn('[WAV Stop Error]', err));
+      try {
+        await wavRecorder.stop();
+      } catch (err) {
+        console.warn('[WAV Stop Error]', err);
+      }
       wavRecorder = null;
     }
 
@@ -242,6 +260,13 @@ document.addEventListener('DOMContentLoaded', () => {
     lobbyView.classList.remove('hidden');
     remoteNameDisplay.textContent = 'Waiting for peer...';
     recStatusText.textContent = 'RECORDING IDLE';
+    btnMuteToggle.classList.remove('muted');
+    iconMicOn.classList.remove('hidden');
+    iconMicOff.classList.add('hidden');
+
+    if (vuFillLeft) vuFillLeft.style.width = '0%';
+    if (vuFillRight) vuFillRight.style.width = '0%';
+
     window.history.replaceState({}, document.title, window.location.pathname);
   }
 
@@ -267,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
       visualizerAudioCtx = new AudioCtx({ sampleRate: 48000, latencyHint: 'interactive' });
     }
     if (visualizerAudioCtx.state === 'suspended') {
-      await visualizerAudioCtx.resume();
+      try { await visualizerAudioCtx.resume(); } catch (e) {}
     }
 
     updateCanvasDimensions();
@@ -306,6 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderWaveformAndVU(analyser, canvas, vuElement, color) {
+    if (!canvas || !vuElement) return;
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     analyser.getByteTimeDomainData(dataArray);
@@ -354,7 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
     leftAnalyser = null;
     rightAnalyser = null;
     if (visualizerAudioCtx) {
-      visualizerAudioCtx.close();
+      try { visualizerAudioCtx.close(); } catch (e) {}
       visualizerAudioCtx = null;
     }
   }
@@ -385,12 +411,10 @@ document.addEventListener('DOMContentLoaded', () => {
     window.location.href = '/admin';
   }
 
-  const brandTitleTrigger = document.getElementById('brand-title-trigger');
   if (brandTitleTrigger) {
     brandTitleTrigger.addEventListener('dblclick', triggerAdminAccess);
   }
 
-  const secretAdminTrigger = document.getElementById('secret-admin-trigger');
   if (secretAdminTrigger) {
     secretAdminTrigger.addEventListener('click', triggerAdminAccess);
   }
@@ -407,246 +431,9 @@ document.addEventListener('DOMContentLoaded', () => {
     navAdminBtn.addEventListener('click', triggerAdminAccess);
   }
 
-  // Admin login submission (Passcode validated strictly on server)
-  if (adminLoginForm) {
-    adminLoginForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (loginErrorMsg) loginErrorMsg.classList.add('hidden');
-
-      const passcode = adminPasscode ? adminPasscode.value.trim() : '';
-      if (!passcode) return;
-
-      const res = await adminController.login(passcode);
-      if (res.success) {
-        if (adminPasscode) adminPasscode.value = '';
-        if (adminLoginModal) closeModal(adminLoginModal);
-        openAdminDashboard();
-        showToast('Admin authenticated successfully', 'success');
-      } else if (loginErrorMsg) {
-        loginErrorMsg.textContent = res.error || 'Incorrect passcode';
-        loginErrorMsg.classList.remove('hidden');
-      }
-    });
-  }
-
-  if (adminLogoutBtn) {
-    adminLogoutBtn.addEventListener('click', async () => {
-      await adminController.logout();
-      if (adminDashboardModal) closeModal(adminDashboardModal);
-      showToast('Admin logged out', 'success');
-    });
-  }
-
-  async function openAdminDashboard() {
-    openModal(adminDashboardModal);
-    await loadRecordingsList();
-  }
-
-  async function loadRecordingsList() {
-    try {
-      const recordings = await adminController.fetchRecordings();
-      recordingsTableBody.innerHTML = '';
-
-      if (recordings.length === 0) {
-        adminEmptyState.classList.remove('hidden');
-        recordingsTableBody.parentElement.classList.add('hidden');
-        adminAudioPlayerCard.classList.add('hidden');
-        return;
-      }
-
-      adminEmptyState.classList.add('hidden');
-      recordingsTableBody.parentElement.classList.remove('hidden');
-
-      recordings.forEach((rec) => {
-        const tr = document.createElement('tr');
-        const formattedDate = new Date(rec.createdAt).toLocaleString();
-        const durationStr = adminController.formatDuration(rec.duration);
-        const sizeStr = adminController.formatBytes(rec.fileSize);
-
-        tr.innerHTML = `
-          <td>${formattedDate}</td>
-          <td><span class="table-badge">${rec.roomId}</span></td>
-          <td style="color:#a5b4fc; font-weight:600;">${rec.hostName}</td>
-          <td style="color:#6ee7b7; font-weight:600;">${rec.guestName}</td>
-          <td>${durationStr}</td>
-          <td>${sizeStr}</td>
-          <td>
-            <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
-              <button class="btn-action-icon play-rec-btn" data-id="${rec.id}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Play
-              </button>
-              <button class="btn-action-icon download-stereo-btn" data-id="${rec.id}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Stereo
-              </button>
-              <button class="btn-action-icon download-left-btn" data-id="${rec.id}" title="Download Host Audio Track Only">
-                Ch 1 (Host)
-              </button>
-              <button class="btn-action-icon download-right-btn" data-id="${rec.id}" title="Download Guest Audio Track Only">
-                Ch 2 (Guest)
-              </button>
-              <button class="btn-action-icon danger delete-rec-btn" data-id="${rec.id}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              </button>
-            </div>
-          </td>
-        `;
-
-        recordingsTableBody.appendChild(tr);
-      });
-
-      // Bind dynamic row button actions
-      document.querySelectorAll('.play-rec-btn').forEach(btn => {
-        btn.addEventListener('click', () => playRecording(btn.dataset.id));
-      });
-      document.querySelectorAll('.download-stereo-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try {
-            showToast('Preparing Stereo WAV download...', 'info');
-            await adminController.downloadFile(btn.dataset.id, 0);
-            showToast('Stereo WAV downloaded successfully', 'success');
-          } catch (e) {
-            showToast(e.message || 'Download failed', 'error');
-          }
-        });
-      });
-      document.querySelectorAll('.download-left-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try {
-            showToast('Preparing Ch 1 (Host) WAV download...', 'info');
-            await adminController.downloadFile(btn.dataset.id, 1);
-            showToast('Ch 1 WAV downloaded successfully', 'success');
-          } catch (e) {
-            showToast(e.message || 'Download failed', 'error');
-          }
-        });
-      });
-      document.querySelectorAll('.download-right-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try {
-            showToast('Preparing Ch 2 (Guest) WAV download...', 'info');
-            await adminController.downloadFile(btn.dataset.id, 2);
-            showToast('Ch 2 WAV downloaded successfully', 'success');
-          } catch (e) {
-            showToast(e.message || 'Download failed', 'error');
-          }
-        });
-      });
-      document.querySelectorAll('.delete-rec-btn').forEach(btn => {
-        btn.addEventListener('click', () => deleteRecording(btn.dataset.id));
-      });
-
-    } catch (err) {
-      console.error('Error loading recordings:', err);
-      showToast(err.message || 'Failed to load recordings', 'error');
-    }
-  }
-
-  let selectedRecordingId = null;
-  let currentAudioObjectUrl = null;
-
-  function setPlayerAudioSource(blob) {
-    if (currentAudioObjectUrl) {
-      URL.revokeObjectURL(currentAudioObjectUrl);
-    }
-    currentAudioObjectUrl = URL.createObjectURL(blob);
-    adminAudioElement.src = currentAudioObjectUrl;
-  }
-
-  async function playRecording(id) {
-    selectedRecordingId = id;
-    const rec = adminController.recordings.find(r => r.id === id);
-    if (!rec) return;
-
-    playerTitle.textContent = `${rec.hostName} vs ${rec.guestName} (${rec.roomId})`;
-    playerSubtext.textContent = `Uncompressed 16-Bit PCM WAV | Size: ${adminController.formatBytes(rec.fileSize)} | Duration: ${adminController.formatDuration(rec.duration)}`;
-
-    // Reset active channel buttons to Stereo Both
-    document.querySelectorAll('.ch-btn').forEach(b => b.classList.remove('active'));
-    const defaultChBtn = document.querySelector('.ch-btn[data-ch="0"]');
-    if (defaultChBtn) defaultChBtn.classList.add('active');
-
-    // Direct authorized audio fetch stream
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/recordings/${id}/file`, {
-        headers: { 'Authorization': `Bearer ${adminController.token}` }
-      });
-      const blob = await response.blob();
-      setPlayerAudioSource(blob);
-      adminAudioPlayerCard.classList.remove('hidden');
-      adminAudioElement.play();
-    } catch (err) {
-      showToast('Error loading audio stream', 'error');
-    }
-  }
-
-  // Audio Channel Selection (Stereo vs Solo Host vs Solo Guest)
-  document.querySelectorAll('.ch-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      document.querySelectorAll('.ch-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      const ch = parseInt(btn.dataset.ch);
-      if (!selectedRecordingId) return;
-
-      try {
-        let endpoint = `${apiBaseUrl}/api/admin/recordings/${selectedRecordingId}/file`;
-        if (ch === 1 || ch === 2) {
-          endpoint = `${apiBaseUrl}/api/admin/recordings/${selectedRecordingId}/channel/${ch}`;
-        }
-
-        const response = await fetch(endpoint, {
-          headers: { 'Authorization': `Bearer ${adminController.token}` }
-        });
-        const blob = await response.blob();
-        setPlayerAudioSource(blob);
-        adminAudioElement.play();
-      } catch (err) {
-        showToast('Error switching audio channel', 'error');
-      }
-    });
-  });
-
-  async function deleteRecording(id) {
-    if (!confirm('Are you sure you want to permanently delete this WAV call recording?')) return;
-
-    // Optimistically remove table row from UI instantaneously
-    const targetBtn = document.querySelector(`.delete-rec-btn[data-id="${id}"]`);
-    const tr = targetBtn ? targetBtn.closest('tr') : null;
-    if (tr) tr.remove();
-
-    try {
-      const res = await adminController.deleteRecording(id);
-      showToast(res.message || 'Recording deleted', 'success');
-      await loadRecordingsList();
-    } catch (err) {
-      showToast(err.message || 'Failed to delete recording', 'error');
-      await loadRecordingsList();
-    }
-  }
-
-  // -------------------------------------------------------------
-  // MODAL & TOAST HELPERS
-  // -------------------------------------------------------------
-  function openModal(modal) {
-    if (modal) modal.classList.add('active');
-  }
-
-  function closeModal(modal) {
-    if (modal) modal.classList.remove('active');
-  }
-
-  document.querySelectorAll('[data-close-modal]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const targetId = btn.dataset.closeModal;
-      const modal = document.getElementById(targetId);
-      if (modal) closeModal(modal);
-    });
-  });
-
   function showToast(message, type = 'info') {
     const toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) return;
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;

@@ -6,6 +6,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
 const cors = require('cors');
+const { Transform } = require('stream');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,12 +22,17 @@ const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
   const envConfig = fs.readFileSync(envPath, 'utf8');
   envConfig.split(/\r?\n/).forEach(line => {
-    const trimmed = line.trim();
+    let trimmed = line.trim();
+    if (trimmed.startsWith('export ')) {
+      trimmed = trimmed.substring(7).trim();
+    }
     if (trimmed && !trimmed.startsWith('#')) {
       const firstEquals = trimmed.indexOf('=');
       if (firstEquals !== -1) {
         const key = trimmed.substring(0, firstEquals).trim();
-        const value = trimmed.substring(firstEquals + 1).trim().replace(/^["']|["']$/g, '');
+        let value = trimmed.substring(firstEquals + 1).trim();
+        // Remove surrounding single or double quotes
+        value = value.replace(/^["']|["']$/g, '');
         if (key && !process.env[key]) {
           process.env[key] = value;
         }
@@ -35,9 +41,12 @@ if (fs.existsSync(envPath)) {
   });
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT, 10) || 3000;
 // Default admin passcode - configurable via environment variable
 const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || 'admin123';
+if (!process.env.ADMIN_PASSCODE || process.env.ADMIN_PASSCODE === 'admin123') {
+  console.warn('⚠️  [Security Warning] Using default ADMIN_PASSCODE ("admin123"). Set ADMIN_PASSCODE in .env for production.');
+}
 
 // Direct paths
 const DATA_DIR = path.join(__dirname, 'data');
@@ -58,7 +67,48 @@ if (!fs.existsSync(METADATA_FILE)) {
 // In-memory active session tokens for admin auth (with 24h expiration timestamp)
 const activeAdminTokens = new Map(); // token -> timestamp
 
-// Cleanup expired admin tokens every hour
+// In-memory Rate Limiting for Admin Login (max 5 failed attempts / min per IP)
+const loginAttempts = new Map(); // ip -> { count: number, firstAttempt: number, blockedUntil: number }
+
+function checkLoginRateLimit(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry) return { allowed: true };
+
+  if (entry.blockedUntil && now < entry.blockedUntil) {
+    const remainingSec = Math.ceil((entry.blockedUntil - now) / 1000);
+    return { allowed: false, remainingSec };
+  }
+
+  // Reset window if 60 seconds elapsed
+  if (now - entry.firstAttempt > 60000) {
+    loginAttempts.delete(ip);
+    return { allowed: true };
+  }
+
+  if (entry.count >= 5) {
+    entry.blockedUntil = now + 60000; // block for 1 minute
+    return { allowed: false, remainingSec: 60 };
+  }
+
+  return { allowed: true };
+}
+
+function recordFailedLogin(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry) {
+    loginAttempts.set(ip, { count: 1, firstAttempt: now, blockedUntil: 0 });
+  } else {
+    entry.count++;
+  }
+}
+
+function resetLoginRateLimit(ip) {
+  loginAttempts.delete(ip);
+}
+
+// Cleanup expired admin tokens and rate-limit maps every hour
 setInterval(() => {
   const now = Date.now();
   const ONE_DAY = 24 * 60 * 60 * 1000;
@@ -67,7 +117,15 @@ setInterval(() => {
       activeAdminTokens.delete(token);
     }
   }
+  for (const [ip, entry] of loginAttempts.entries()) {
+    if (now - entry.firstAttempt > 300000 && now > (entry.blockedUntil || 0)) {
+      loginAttempts.delete(ip);
+    }
+  }
 }, 60 * 60 * 1000);
+
+// Serialized async lock for metadata file writing to prevent race conditions
+let metadataWriteQueue = Promise.resolve();
 
 // Helper to read metadata
 function getRecordingsMetadata() {
@@ -83,23 +141,40 @@ function getRecordingsMetadata() {
   }
 }
 
-// Helper to write metadata atomically
-function saveRecordingsMetadata(recordings) {
-  try {
-    const tempFile = `${METADATA_FILE}.tmp.${Date.now()}`;
-    fs.writeFileSync(tempFile, JSON.stringify(recordings, null, 2));
-    fs.renameSync(tempFile, METADATA_FILE);
-  } catch (err) {
-    console.error('Error writing metadata file:', err);
-  }
+// Helper to write metadata atomically via serialized queue
+async function saveRecordingsMetadata(recordings) {
+  metadataWriteQueue = metadataWriteQueue.then(async () => {
+    try {
+      const tempFile = `${METADATA_FILE}.tmp.${crypto.randomUUID()}`;
+      fs.writeFileSync(tempFile, JSON.stringify(recordings, null, 2), 'utf8');
+      try {
+        fs.renameSync(tempFile, METADATA_FILE);
+      } catch (renameErr) {
+        // Fallback for Windows EPERM file locking
+        fs.copyFileSync(tempFile, METADATA_FILE);
+        try { fs.unlinkSync(tempFile); } catch (e) {}
+      }
+    } catch (err) {
+      console.error('Error writing metadata file:', err);
+    }
+  });
+  return metadataWriteQueue;
 }
+
+// Security Headers Middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
 
 // Middleware
 app.use(cors({
   exposedHeaders: ['Content-Disposition', 'Content-Length', 'Accept-Ranges', 'Content-Range']
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Dedicated Admin Portal Route
@@ -107,26 +182,27 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// Configure Multer for WAV file uploads with strict MIME filtering
+// Configure Multer for WAV file uploads with strict validation
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, RECORDINGS_DIR);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const uniqueSuffix = Date.now() + '-' + crypto.randomBytes(6).toString('hex');
     cb(null, `call-rec-${uniqueSuffix}.wav`);
   }
 });
+
 const upload = multer({
   storage: storage,
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max limit
   fileFilter: (req, file, cb) => {
     const validMimeTypes = [
       'audio/wav', 'audio/wave', 'audio/x-wav', 'audio/x-pn-wav',
-      'audio/vnd.wave', 'application/octet-stream', 'audio/pcm', 'audio/raw', ''
+      'audio/vnd.wave', 'audio/pcm', 'audio/raw'
     ];
-    const isWavExt = !file.originalname || file.originalname.toLowerCase().endsWith('.wav');
-    if (validMimeTypes.includes(file.mimetype) || isWavExt) {
+    const isWavExt = file.originalname && file.originalname.toLowerCase().endsWith('.wav');
+    if (validMimeTypes.includes(file.mimetype) || (file.mimetype === 'application/octet-stream' && isWavExt) || isWavExt) {
       cb(null, true);
     } else {
       cb(new Error('Invalid file format. Only audio WAV files are allowed.'));
@@ -134,11 +210,12 @@ const upload = multer({
   }
 });
 
-// Admin authentication middleware (supports Header, x-admin-token, or query parameter)
+// Admin authentication middleware (supports Authorization Header or x-admin-token)
 function requireAdminAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : req.headers['x-admin-token'];
 
+  // Support query token fallback for direct browser media streams if needed
   if (!token && req.query && req.query.token) {
     token = req.query.token;
   }
@@ -153,8 +230,6 @@ function requireAdminAuth(req, res, next) {
 }
 
 // Stream Transform for Extracting Mono Left (1) or Right (2) PCM Channel
-const { Transform } = require('stream');
-
 class MonoChannelTransform extends Transform {
   constructor(channel) { // 1 = Left (Host), 2 = Right (Guest)
     super();
@@ -187,9 +262,9 @@ class MonoChannelTransform extends Transform {
   }
 
   _flush(callback) {
-    if (this.remainder.length >= 2) {
+    if (this.remainder.length >= this.channelOffset + 2) {
       const monoBuf = Buffer.allocUnsafe(2);
-      monoBuf.writeInt16LE(this.remainder.readInt16LE(0), 0);
+      monoBuf.writeInt16LE(this.remainder.readInt16LE(this.channelOffset), 0);
       this.push(monoBuf);
     }
     callback();
@@ -200,11 +275,11 @@ class MonoChannelTransform extends Transform {
 // PUBLIC & RECORDING API ENDPOINTS
 // -------------------------------------------------------------
 
-// Helper to generate clear, meaningful filenames based on callers, date, time, and room ID
+// Helper to generate clear, unique filenames based on callers, date, time, and room ID
 function generateMeaningfulFilename(hostName, guestName, roomId) {
-  const safeHost = String(hostName || 'Host').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-  const safeGuest = String(guestName || 'Guest').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-  const safeRoom = String(roomId || 'Room').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeHost = String(hostName || 'Host').trim().replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 30);
+  const safeGuest = String(guestName || 'Guest').trim().replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 30);
+  const safeRoom = String(roomId || 'Room').trim().replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 30);
 
   const now = new Date();
   const year = now.getFullYear();
@@ -215,12 +290,20 @@ function generateMeaningfulFilename(hostName, guestName, roomId) {
   const seconds = String(now.getSeconds()).padStart(2, '0');
 
   const timestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
-  return `Call_${safeHost}_vs_${safeGuest}_${timestamp}_${safeRoom}.wav`;
+  let baseFilename = `Call_${safeHost}_vs_${safeGuest}_${timestamp}_${safeRoom}.wav`;
+  
+  // Ensure uniqueness if a file with the exact name already exists
+  if (fs.existsSync(path.join(RECORDINGS_DIR, baseFilename))) {
+    const randomSuffix = crypto.randomBytes(3).toString('hex');
+    baseFilename = `Call_${safeHost}_vs_${safeGuest}_${timestamp}_${safeRoom}_${randomSuffix}.wav`;
+  }
+
+  return baseFilename;
 }
 
 // Upload dual-channel uncompressed WAV recording
 app.post('/api/recordings/upload', (req, res) => {
-  upload.single('audio')(req, res, (err) => {
+  upload.single('audio')(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ success: false, message: err.message || 'File upload failed.' });
     }
@@ -229,33 +312,49 @@ app.post('/api/recordings/upload', (req, res) => {
         return res.status(400).json({ success: false, message: 'No audio file uploaded.' });
       }
 
-      const { roomId, hostName, guestName, duration, sampleRate, numChannels } = req.body;
+      const { roomId, hostName, guestName, duration, sampleRate, numChannels, streamId } = req.body;
       const recordingId = crypto.randomUUID();
+
+      // Clean up any background chunk temp file if streamId was passed
+      if (streamId) {
+        const safeStreamId = String(streamId).replace(/[^a-zA-Z0-9-]/g, '');
+        if (safeStreamId) {
+          const tempFilePath = path.join(RECORDINGS_DIR, `temp-${safeStreamId}.raw`);
+          if (fs.existsSync(tempFilePath)) {
+            try {
+              fs.unlinkSync(tempFilePath);
+              console.log(`[Upload Cleanup] Cleaned up real-time stream temp file: temp-${safeStreamId}.raw`);
+            } catch (e) {}
+          }
+        }
+      }
 
       // Rename uploaded file to meaningful name
       const finalFilename = generateMeaningfulFilename(hostName, guestName, roomId);
       const finalFilePath = path.join(RECORDINGS_DIR, finalFilename);
+      let actualFilename = req.file.filename;
+
       try {
         fs.renameSync(req.file.path, finalFilePath);
+        actualFilename = finalFilename;
       } catch (e) {
         console.warn('Could not rename uploaded file, retaining original:', e);
       }
 
-      const actualFilePath = fs.existsSync(finalFilePath) ? finalFilePath : req.file.path;
-      const actualFilename = fs.existsSync(finalFilePath) ? finalFilename : req.file.filename;
+      const relativePath = path.join('recordings', actualFilename).replace(/\\/g, '/');
       
       const recordingEntry = {
         id: recordingId,
         filename: actualFilename,
         originalName: actualFilename,
-        filePath: actualFilePath,
+        filePath: relativePath,
         fileSize: req.file.size,
-        roomId: roomId || 'Unknown Room',
-        hostName: hostName || 'Host',
-        guestName: guestName || 'Guest',
+        roomId: String(roomId || 'Unknown Room').trim().substring(0, 60),
+        hostName: String(hostName || 'Host').trim().substring(0, 50),
+        guestName: String(guestName || 'Guest').trim().substring(0, 50),
         duration: parseFloat(duration) || 0,
-        sampleRate: parseInt(sampleRate) || 44100,
-        numChannels: parseInt(numChannels) || 2,
+        sampleRate: parseInt(sampleRate, 10) || 48000,
+        numChannels: parseInt(numChannels, 10) || 2,
         format: 'WAVE uncompressed PCM 16-bit',
         channelInfo: {
           left: 'Host / Local Caller',
@@ -266,7 +365,7 @@ app.post('/api/recordings/upload', (req, res) => {
 
       const recordings = getRecordingsMetadata();
       recordings.unshift(recordingEntry);
-      saveRecordingsMetadata(recordings);
+      await saveRecordingsMetadata(recordings);
 
       console.log(`[Upload Success] Saved dual-channel WAV recording ${actualFilename} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
 
@@ -294,7 +393,11 @@ app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet
       return res.status(400).json({ success: false, message: 'Invalid chunk data or missing streamId.' });
     }
 
-    const safeStreamId = streamId.replace(/[^a-zA-Z0-9-]/g, '');
+    const safeStreamId = String(streamId).replace(/[^a-zA-Z0-9-]/g, '');
+    if (!safeStreamId) {
+      return res.status(400).json({ success: false, message: 'Invalid stream identifier.' });
+    }
+
     const tempFilePath = path.join(RECORDINGS_DIR, `temp-${safeStreamId}.raw`);
 
     // Reserve 44 bytes at beginning of temp file for instant 0ms header writing on finalization
@@ -324,14 +427,18 @@ app.post('/api/recordings/stream-chunk', express.raw({ type: ['application/octet
 });
 
 // Finalize parallel audio stream upload instantly with in-place WAV header update
-app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
+app.post('/api/recordings/stream-finalize', express.json(), async (req, res) => {
   try {
     const { streamId, roomId, hostName, guestName, duration, sampleRate, numChannels } = req.body;
     if (!streamId) {
       return res.status(400).json({ success: false, message: 'Missing streamId.' });
     }
 
-    const safeStreamId = streamId.replace(/[^a-zA-Z0-9-]/g, '');
+    const safeStreamId = String(streamId).replace(/[^a-zA-Z0-9-]/g, '');
+    if (!safeStreamId) {
+      return res.status(400).json({ success: false, message: 'Invalid stream identifier.' });
+    }
+
     const tempFilePath = path.join(RECORDINGS_DIR, `temp-${safeStreamId}.raw`);
 
     if (!fs.existsSync(tempFilePath)) {
@@ -339,7 +446,6 @@ app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
     }
 
     const rawStat = fs.statSync(tempFilePath);
-    // Raw PCM data size excluding the 44-byte reserved header space
     const rawDataSize = rawStat.size >= 44 ? rawStat.size - 44 : 0;
 
     const finalFilename = generateMeaningfulFilename(hostName, guestName, roomId);
@@ -367,55 +473,65 @@ app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
     wavHeader.write('data', 36);
     wavHeader.writeUInt32LE(rawDataSize, 40);
 
+    const completeFinalize = async () => {
+      const recordingId = crypto.randomUUID();
+      const relativePath = path.join('recordings', finalFilename).replace(/\\/g, '/');
+
+      const recordingEntry = {
+        id: recordingId,
+        filename: finalFilename,
+        originalName: finalFilename,
+        filePath: relativePath,
+        fileSize: 44 + rawDataSize,
+        roomId: String(roomId || 'Unknown Room').trim().substring(0, 60),
+        hostName: String(hostName || 'Host').trim().substring(0, 50),
+        guestName: String(guestName || 'Guest').trim().substring(0, 50),
+        duration: parseFloat(duration) || (rawDataSize / byteRate) || 0,
+        sampleRate: targetSampleRate,
+        numChannels: targetChannels,
+        format: 'WAVE uncompressed PCM 16-bit',
+        channelInfo: {
+          left: 'Host / Local Caller',
+          right: 'Guest / Remote Caller'
+        },
+        createdAt: new Date().toISOString()
+      };
+
+      const recordings = getRecordingsMetadata();
+      recordings.unshift(recordingEntry);
+      await saveRecordingsMetadata(recordings);
+
+      console.log(`[Stream Finalize Success] Instantly finalized WAV recording ${finalFilename} (${((44 + rawDataSize) / 1024 / 1024).toFixed(2)} MB)`);
+
+      res.json({
+        success: true,
+        message: 'Parallel stream recording finalized successfully.',
+        recording: recordingEntry
+      });
+    };
+
     // Overwrite header in-place at byte offset 0 (0ms disk copy time)
     try {
       const fd = fs.openSync(tempFilePath, 'r+');
       fs.writeSync(fd, wavHeader, 0, 44, 0);
       fs.closeSync(fd);
       fs.renameSync(tempFilePath, finalFilePath);
+      await completeFinalize();
     } catch (inPlaceErr) {
       console.warn('In-place header write failed, fallback to file copy:', inPlaceErr);
       const writeStream = fs.createWriteStream(finalFilePath);
       writeStream.write(wavHeader);
       const readStream = fs.createReadStream(tempFilePath, { start: 44 });
       readStream.pipe(writeStream);
-      readStream.on('finish', () => {
+      writeStream.on('finish', async () => {
         try { fs.unlinkSync(tempFilePath); } catch (e) {}
+        await completeFinalize();
+      });
+      writeStream.on('error', (wsErr) => {
+        console.error('Error writing fallback stream:', wsErr);
+        res.status(500).json({ success: false, message: 'Failed to write final recording.' });
       });
     }
-
-    const recordingId = crypto.randomUUID();
-    const recordingEntry = {
-      id: recordingId,
-      filename: finalFilename,
-      originalName: finalFilename,
-      filePath: finalFilePath,
-      fileSize: 44 + rawDataSize,
-      roomId: roomId || 'Unknown Room',
-      hostName: hostName || 'Host',
-      guestName: guestName || 'Guest',
-      duration: parseFloat(duration) || (rawDataSize / byteRate) || 0,
-      sampleRate: targetSampleRate,
-      numChannels: targetChannels,
-      format: 'WAVE uncompressed PCM 16-bit',
-      channelInfo: {
-        left: 'Host / Local Caller',
-        right: 'Guest / Remote Caller'
-      },
-      createdAt: new Date().toISOString()
-    };
-
-    const recordings = getRecordingsMetadata();
-    recordings.unshift(recordingEntry);
-    saveRecordingsMetadata(recordings);
-
-    console.log(`[Stream Finalize Success] Instantly finalized WAV recording ${finalFilename} (${((44 + rawDataSize) / 1024 / 1024).toFixed(2)} MB)`);
-
-    res.json({
-      success: true,
-      message: 'Parallel stream recording finalized successfully.',
-      recording: recordingEntry
-    });
 
   } catch (err) {
     console.error('Error finalizing stream upload:', err);
@@ -427,29 +543,40 @@ app.post('/api/recordings/stream-finalize', express.json(), (req, res) => {
 // SECURE ADMIN API ENDPOINTS (PASSCODE PROTECTED SERVER-SIDE)
 // -------------------------------------------------------------
 
-// Admin login - Passcode validation strictly on server side
+// Admin login - Passcode validation strictly on server side with constant-time check & rate limiting
 app.post('/api/admin/login', (req, res) => {
+  const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+  const rateLimitStatus = checkLoginRateLimit(clientIp);
+
+  if (!rateLimitStatus.allowed) {
+    return res.status(429).json({
+      success: false,
+      message: `Too many failed login attempts. Please wait ${rateLimitStatus.remainingSec} seconds.`
+    });
+  }
+
   const { passcode } = req.body;
   
   if (!passcode) {
     return res.status(400).json({ success: false, message: 'Passcode is required.' });
   }
 
-  // Secure timing-safe string comparison to prevent timing attacks
-  const targetBuffer = Buffer.from(ADMIN_PASSCODE);
-  const inputBuffer = Buffer.from(String(passcode));
+  // Constant-time comparison using fixed-size SHA-256 HMACs to eliminate timing side-channels
+  const hmacKey = 'callwave-auth-hmac-salt';
+  const targetHash = crypto.createHmac('sha256', hmacKey).update(ADMIN_PASSCODE).digest();
+  const inputHash = crypto.createHmac('sha256', hmacKey).update(String(passcode)).digest();
 
-  let isMatch = false;
-  if (targetBuffer.length === inputBuffer.length) {
-    isMatch = crypto.timingSafeEqual(targetBuffer, inputBuffer);
-  }
+  const isMatch = crypto.timingSafeEqual(targetHash, inputHash);
 
   if (!isMatch) {
+    recordFailedLogin(clientIp);
     return res.status(401).json({
       success: false,
       message: 'Incorrect admin passcode.'
     });
   }
+
+  resetLoginRateLimit(clientIp);
 
   // Generate secure random session token
   const sessionToken = crypto.randomBytes(32).toString('hex');
@@ -494,7 +621,8 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
     return res.status(404).send('Recording not found.');
   }
 
-  const filePath = path.join(RECORDINGS_DIR, rec.filename);
+  const safeFilename = path.basename(rec.filename);
+  const filePath = path.join(RECORDINGS_DIR, safeFilename);
   if (!fs.existsSync(filePath)) {
     return res.status(404).send('Audio file missing on server.');
   }
@@ -510,7 +638,7 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
     const start = parseInt(parts[0], 10);
     const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-    if (start >= fileSize || end >= fileSize) {
+    if (start >= fileSize || end >= fileSize || start > end) {
       res.setHeader('Content-Range', `bytes */${fileSize}`);
       return res.status(416).send('Requested Range Not Satisfiable');
     }
@@ -523,7 +651,7 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
       'Accept-Ranges': 'bytes',
       'Content-Length': chunkSize,
       'Content-Type': 'audio/wav',
-      'Content-Disposition': `${dispositionType}; filename="${rec.filename}"`
+      'Content-Disposition': `${dispositionType}; filename="${safeFilename}"`
     });
     fileStream.pipe(res);
   } else {
@@ -531,7 +659,7 @@ app.get('/api/admin/recordings/:id/file', requireAdminAuth, (req, res) => {
       'Content-Length': fileSize,
       'Content-Type': 'audio/wav',
       'Accept-Ranges': 'bytes',
-      'Content-Disposition': `${dispositionType}; filename="${rec.filename}"`
+      'Content-Disposition': `${dispositionType}; filename="${safeFilename}"`
     });
     fs.createReadStream(filePath).pipe(res);
   }
@@ -553,7 +681,8 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
     return res.status(404).send('Recording not found.');
   }
 
-  const filePath = path.join(RECORDINGS_DIR, rec.filename);
+  const safeFilename = path.basename(rec.filename);
+  const filePath = path.join(RECORDINGS_DIR, safeFilename);
   if (!fs.existsSync(filePath)) {
     return res.status(404).send('Audio file missing on server.');
   }
@@ -575,7 +704,7 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
     let dataOffset = -1;
     let dataSize = 0;
     let numChannels = 2;
-    let sampleRate = 44100;
+    let sampleRate = 48000;
     let bitsPerSample = 16;
 
     let offset = 12;
@@ -583,7 +712,7 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
       const subchunkId = headerBuf.toString('ascii', offset, offset + 4);
       const subchunkSize = headerBuf.readUInt32LE(offset + 4);
 
-      if (subchunkId === 'fmt ') {
+      if (subchunkId === 'fmt ' && offset + 24 <= bytesRead) {
         numChannels = headerBuf.readUInt16LE(offset + 10);
         sampleRate = headerBuf.readUInt32LE(offset + 12);
         bitsPerSample = headerBuf.readUInt16LE(offset + 22);
@@ -593,16 +722,18 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
         break;
       }
 
-      // Word alignment: subchunk payload padded to even number of bytes
       const paddedSize = subchunkSize + (subchunkSize % 2);
       offset += 8 + paddedSize;
     }
 
+    const stat = fs.statSync(filePath);
     if (dataOffset === -1 || numChannels !== 2 || bitsPerSample !== 16) {
-      // Fallback: If single channel or non 16-bit, send raw file stream
       res.setHeader('Content-Type', 'audio/wav');
       return fs.createReadStream(filePath).pipe(res);
     }
+
+    // Clamp dataSize to actual file size on disk
+    dataSize = Math.min(dataSize, Math.max(0, stat.size - dataOffset));
 
     // Single Channel WAV Header Construction
     const monoDataSize = Math.floor(dataSize / 2);
@@ -626,7 +757,7 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
 
     const totalMonoFileSize = 44 + monoDataSize;
     const channelName = targetChannel === 1 ? 'Host-Left' : 'Guest-Right';
-    const downloadFilename = rec.filename.replace('.wav', `-${channelName}.wav`);
+    const downloadFilename = safeFilename.replace('.wav', `-${channelName}.wav`);
 
     const isDownload = req.query.dl === '1' || req.query.download === '1';
     const dispositionType = isDownload ? 'attachment' : 'inline';
@@ -651,14 +782,12 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
         'Content-Disposition': `${dispositionType}; filename="${downloadFilename}"`
       });
 
-      // Stream header slice if within byte offset 0-43
       if (start < 44) {
         const headerEnd = Math.min(43, end);
         const headerSlice = monoWavHeader.subarray(start, headerEnd + 1);
         res.write(headerSlice);
       }
 
-      // Stream PCM payload slice if range extends past byte 43
       if (end >= 44) {
         const monoDataStart = Math.max(0, start - 44);
         const monoDataEnd = end - 44;
@@ -697,7 +826,6 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
       });
 
       const channelTransform = new MonoChannelTransform(targetChannel);
-
       fileStream.pipe(channelTransform).pipe(res);
     }
   } catch (err) {
@@ -705,12 +833,14 @@ app.get('/api/admin/recordings/:id/channel/:ch', requireAdminAuth, (req, res) =>
       try { fs.closeSync(fd); } catch (e) {}
     }
     console.error('Error streaming split channel WAV:', err);
-    res.status(500).send('Error extracting audio channel stream.');
+    if (!res.headersSent) {
+      res.status(500).send('Error extracting audio channel stream.');
+    }
   }
 });
 
-// Delete recording and all recordings associated with that call (Protected)
-app.delete('/api/admin/recordings/:id', requireAdminAuth, (req, res) => {
+// Delete single recording securely (Protected) - FIX C-1: ONLY deletes the specific recording ID
+app.delete('/api/admin/recordings/:id', requireAdminAuth, async (req, res) => {
   const { id } = req.params;
   let recordings = getRecordingsMetadata();
   const targetRec = recordings.find(r => r.id === id);
@@ -719,58 +849,29 @@ app.delete('/api/admin/recordings/:id', requireAdminAuth, (req, res) => {
     return res.status(404).json({ success: false, message: 'Recording not found.' });
   }
 
-  // Find all recordings associated with this call (by exact ID or matching non-generic roomId)
-  const targetRoomId = targetRec.roomId;
-  const toDelete = recordings.filter(r => {
-    if (r.id === id) return true;
-    if (targetRoomId && targetRoomId !== 'Unknown Room' && r.roomId === targetRoomId) return true;
-    return false;
-  });
+  // Delete only the physical audio file for this specific recording
+  const safeFilename = path.basename(targetRec.filename);
+  const audioFilePath = path.join(RECORDINGS_DIR, safeFilename);
 
-  const deleteIds = new Set(toDelete.map(r => r.id));
+  if (fs.existsSync(audioFilePath)) {
+    try {
+      fs.unlinkSync(audioFilePath);
+      console.log(`[Delete Success] Deleted audio file: ${audioFilePath}`);
+    } catch (err) {
+      console.error(`[Delete Warning] Could not unlink ${audioFilePath}:`, err.message);
+    }
+  }
 
-  // Delete all physical audio files associated with the call
-  toDelete.forEach(rec => {
-    const filePathsToDelete = [
-      rec.filePath,
-      path.join(RECORDINGS_DIR, rec.filename)
-    ];
+  // Remove the single recording from metadata
+  recordings = recordings.filter(r => r.id !== id);
+  await saveRecordingsMetadata(recordings);
 
-    filePathsToDelete.forEach(fp => {
-      if (fp && fs.existsSync(fp)) {
-        try {
-          fs.unlinkSync(fp);
-          console.log(`[Delete Success] Deleted audio file: ${fp}`);
-        } catch (err) {
-          console.error(`[Delete Warning] Could not unlink ${fp}:`, err.message);
-        }
-      }
-    });
-  });
-
-  // Also clean up any leftover temp files for this room ID or stream
-  try {
-    const files = fs.readdirSync(RECORDINGS_DIR);
-    files.forEach(f => {
-      if (f.startsWith('temp-') && targetRoomId && targetRoomId !== 'Unknown Room' && f.includes(targetRoomId)) {
-        try {
-          fs.unlinkSync(path.join(RECORDINGS_DIR, f));
-        } catch (e) {}
-      }
-    });
-  } catch (e) {}
-
-  // Remove all associated recordings from metadata
-  recordings = recordings.filter(r => !deleteIds.has(r.id));
-  saveRecordingsMetadata(recordings);
-
-  console.log(`[Delete Success] Deleted ${toDelete.length} recording entry/entries associated with call (Room: ${targetRoomId})`);
+  console.log(`[Delete Success] Deleted recording entry (ID: ${id}, Filename: ${safeFilename})`);
 
   res.json({
     success: true,
-    message: `Deleted ${toDelete.length} recording(s) associated with this call.`,
-    deletedCount: toDelete.length,
-    deletedIds: Array.from(deleteIds)
+    message: 'Recording deleted successfully.',
+    deletedId: id
   });
 });
 
@@ -778,7 +879,7 @@ app.delete('/api/admin/recordings/:id', requireAdminAuth, (req, res) => {
 // WEBRTC SOCKET.IO SIGNALING
 // -------------------------------------------------------------
 
-// Active room state tracking
+// Active room state tracking: roomId -> Map(socketId -> { socketId, username, isHost, joinedAt })
 const rooms = new Map();
 
 io.on('connection', (socket) => {
@@ -786,21 +887,33 @@ io.on('connection', (socket) => {
 
   // Join a call room
   socket.on('join-room', ({ roomId, username, isHost }) => {
-    socket.join(roomId);
-    socket.roomId = roomId;
-    socket.username = username || (isHost ? 'Host' : 'Guest');
-    socket.isHost = !!isHost;
+    const safeRoomId = String(roomId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 64) || 'default-room';
+    const safeUsername = String(username || '').trim().substring(0, 50) || (isHost ? 'Host' : 'Guest');
 
-    if (!rooms.has(roomId)) {
-      rooms.set(roomId, new Set());
+    socket.join(safeRoomId);
+    socket.roomId = safeRoomId;
+    socket.username = safeUsername;
+
+    if (!rooms.has(safeRoomId)) {
+      rooms.set(safeRoomId, new Map());
     }
-    const roomUsers = rooms.get(roomId);
-    roomUsers.add(socket.id);
+    const roomUsers = rooms.get(safeRoomId);
 
-    console.log(`[Room Join] ${socket.username} (${socket.id}) joined room: ${roomId}. Total users: ${roomUsers.size}`);
+    // If room is empty, first person joining becomes the effective host / designated offerer
+    const effectiveIsHost = roomUsers.size === 0 ? true : !!isHost;
+    socket.isHost = effectiveIsHost;
+
+    roomUsers.set(socket.id, {
+      socketId: socket.id,
+      username: socket.username,
+      isHost: socket.isHost,
+      joinedAt: Date.now()
+    });
+
+    console.log(`[Room Join] ${socket.username} (${socket.id}, Host: ${socket.isHost}) joined room: ${safeRoomId}. Total users: ${roomUsers.size}`);
 
     // Notify other users in the room
-    socket.to(roomId).emit('user-connected', {
+    socket.to(safeRoomId).emit('user-connected', {
       socketId: socket.id,
       username: socket.username,
       isHost: socket.isHost
@@ -808,16 +921,9 @@ io.on('connection', (socket) => {
 
     // Send existing users list to the newly connected user
     const existingUsers = [];
-    roomUsers.forEach(id => {
+    roomUsers.forEach((userData, id) => {
       if (id !== socket.id) {
-        const s = io.sockets.sockets.get(id);
-        if (s) {
-          existingUsers.push({
-            socketId: s.id,
-            username: s.username,
-            isHost: s.isHost
-          });
-        }
+        existingUsers.push(userData);
       }
     });
     socket.emit('room-users', existingUsers);
@@ -825,17 +931,19 @@ io.on('connection', (socket) => {
 
   // Relay WebRTC Offer
   socket.on('signal-offer', ({ targetSocketId, offer, callerName }) => {
-    console.log(`[Signal] Offer sent from ${socket.username} (${socket.id}) -> target ${targetSocketId}`);
+    if (!targetSocketId || !offer) return;
+    console.log(`[Signal] Offer sent from ${socket.username || socket.id} -> target ${targetSocketId}`);
     io.to(targetSocketId).emit('signal-offer', {
       senderSocketId: socket.id,
       offer,
-      callerName: socket.username
+      callerName: socket.username || callerName || 'Peer'
     });
   });
 
   // Relay WebRTC Answer
   socket.on('signal-answer', ({ targetSocketId, answer }) => {
-    console.log(`[Signal] Answer sent from ${socket.username} (${socket.id}) -> target ${targetSocketId}`);
+    if (!targetSocketId || !answer) return;
+    console.log(`[Signal] Answer sent from ${socket.username || socket.id} -> target ${targetSocketId}`);
     io.to(targetSocketId).emit('signal-answer', {
       senderSocketId: socket.id,
       answer
@@ -844,6 +952,7 @@ io.on('connection', (socket) => {
 
   // Relay WebRTC ICE Candidate
   socket.on('signal-ice-candidate', ({ targetSocketId, candidate }) => {
+    if (!targetSocketId || !candidate) return;
     io.to(targetSocketId).emit('signal-ice-candidate', {
       senderSocketId: socket.id,
       candidate
@@ -855,7 +964,7 @@ io.on('connection', (socket) => {
     if (socket.roomId) {
       socket.to(socket.roomId).emit('peer-audio-toggle', {
         socketId: socket.id,
-        isMuted
+        isMuted: !!isMuted
       });
     }
   });
@@ -865,14 +974,14 @@ io.on('connection', (socket) => {
     if (socket.roomId) {
       socket.to(socket.roomId).emit('call-ended-by-peer', {
         socketId: socket.id,
-        username: socket.username
+        username: socket.username || 'Peer'
       });
     }
   });
 
   // Handle Disconnect
   socket.on('disconnect', () => {
-    console.log(`[Socket Disconnected] ${socket.username} (${socket.id})`);
+    console.log(`[Socket Disconnected] ${socket.username || 'Anonymous'} (${socket.id})`);
     if (socket.roomId && rooms.has(socket.roomId)) {
       const roomUsers = rooms.get(socket.roomId);
       roomUsers.delete(socket.id);
@@ -881,14 +990,23 @@ io.on('connection', (socket) => {
       } else {
         socket.to(socket.roomId).emit('user-disconnected', {
           socketId: socket.id,
-          username: socket.username
+          username: socket.username || 'Peer'
         });
       }
     }
   });
 });
 
-// Start HTTP & WebSocket Server
+// Start HTTP & WebSocket Server with error handling
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use. Please terminate existing process or configure PORT in .env`);
+  } else {
+    console.error('❌ Server startup error:', err);
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, () => {
   console.log(`=======================================================`);
   console.log(`🚀 Call Recorder Server running on http://localhost:${PORT}`);

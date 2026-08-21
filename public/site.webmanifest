@@ -1,11 +1,17 @@
 {
+  "id": "/",
   "name": "CallWave Call Recorder",
   "short_name": "CallWave",
   "description": "Uncompressed Dual-Channel WAV Call Recorder & Secure Dashboard",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
+  "orientation": "portrait",
   "display": "standalone",
-  "background_color": "#0b0f19",
-  "theme_color": "#0b0f19",
+  "background_color": "#07090e",
+  "theme_color": "#07090e",
+  "categories": ["utilities", "business"],
   "icons": [
     {
       "src": "/favicon-32x32.png",
@@ -21,13 +27,13 @@
       "src": "/android-chrome-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/android-chrome-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }

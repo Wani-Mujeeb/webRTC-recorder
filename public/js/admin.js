@@ -98,7 +98,7 @@ class AdminPortalController {
   }
 
   /**
-   * Delete a recording
+   * Delete a single recording
    */
   async deleteRecording(id) {
     if (!this.token) throw new Error('Not authenticated');
@@ -113,7 +113,7 @@ class AdminPortalController {
       throw new Error(data.message || 'Failed to delete recording.');
     }
 
-    return true;
+    return { success: true, message: data.message || 'Recording deleted' };
   }
 
   /**
@@ -140,7 +140,6 @@ class AdminPortalController {
     const a = document.createElement('a');
     a.href = url;
 
-    // Get filename from header if present
     const disposition = response.headers.get('Content-Disposition');
     let filename = `recording-${id}.wav`;
     if (disposition && disposition.indexOf('filename=') !== -1) {
@@ -161,7 +160,7 @@ class AdminPortalController {
    * Helper to format bytes to human readable string
    */
   formatBytes(bytes) {
-    if (bytes === 0) return '0 Bytes';
+    if (!bytes || bytes <= 0 || isNaN(bytes)) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -181,6 +180,16 @@ class AdminPortalController {
 
 window.AdminPortalController = AdminPortalController;
 
+// Helper to escape HTML and prevent XSS injection
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Automatically initialize Admin UI when loaded on admin.html page
 document.addEventListener('DOMContentLoaded', () => {
   const loginSection = document.getElementById('admin-login-section');
@@ -198,20 +207,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const controller = new AdminPortalController();
   const activeBlobUrls = new Map();
-
-  function setInlineAudioSource(recId, blob) {
-    if (activeBlobUrls.has(recId)) {
-      URL.revokeObjectURL(activeBlobUrls.get(recId));
-    }
-    const blobUrl = URL.createObjectURL(blob);
-    activeBlobUrls.set(recId, blobUrl);
-
-    const audioEl = document.getElementById(`audio-player-${recId}`);
-    if (audioEl) {
-      audioEl.src = blobUrl;
-      audioEl.play().catch(e => console.error('Play inline error:', e));
-    }
-  }
 
   async function checkSession() {
     const isValid = await controller.verifySession();
@@ -268,6 +263,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Global document click listener attached ONCE to close dropdown menus
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.download-menu').forEach(m => {
+      m.style.display = 'none';
+      m.classList.remove('show');
+    });
+  });
+
   async function loadRecordings(isManual = false) {
     if (refreshBtn) {
       refreshBtn.classList.add('is-loading');
@@ -275,6 +278,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
+      // Revoke any active blob URLs from previous render
+      for (const url of activeBlobUrls.values()) {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+      }
+      activeBlobUrls.clear();
+
       const recordings = await controller.fetchRecordings();
       recordingsTableBody.innerHTML = '';
 
@@ -297,34 +306,39 @@ document.addEventListener('DOMContentLoaded', () => {
         const durationStr = controller.formatDuration(rec.duration);
         const sizeStr = controller.formatBytes(rec.fileSize);
 
+        const safeId = escapeHtml(rec.id);
+        const safeRoomId = escapeHtml(rec.roomId);
+        const safeHostName = escapeHtml(rec.hostName);
+        const safeGuestName = escapeHtml(rec.guestName);
+
         // Data Row
         const tr = document.createElement('tr');
         tr.className = 'rec-item-row';
         tr.innerHTML = `
           <td>${formattedDate}</td>
-          <td><span class="table-badge">${rec.roomId}</span></td>
-          <td style="color:#a5b4fc; font-weight:600;">${rec.hostName}</td>
-          <td style="color:#6ee7b7; font-weight:600;">${rec.guestName}</td>
+          <td><span class="table-badge">${safeRoomId}</span></td>
+          <td style="color:#a5b4fc; font-weight:600;">${safeHostName}</td>
+          <td style="color:#6ee7b7; font-weight:600;">${safeGuestName}</td>
           <td>${durationStr}</td>
           <td>${sizeStr}</td>
           <td>
             <div class="action-btn-group">
-              <button class="btn-action-primary play-rec-btn" data-id="${rec.id}">
+              <button class="btn-action-primary play-rec-btn" data-id="${safeId}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 Listen / Play
               </button>
               <div class="download-dropdown">
-                <button class="btn-action-outline dl-main-btn" data-id="${rec.id}">
+                <button class="btn-action-outline dl-main-btn" data-id="${safeId}">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   Download WAV ▾
                 </button>
-                <div class="download-menu" id="dl-menu-${rec.id}" style="display: none !important;">
-                  <button class="dl-item download-stereo-btn" data-id="${rec.id}">🎵 Full Stereo WAV</button>
-                  <button class="dl-item download-left-btn" data-id="${rec.id}">🎙 Host Track (Ch 1)</button>
-                  <button class="dl-item download-right-btn" data-id="${rec.id}">🎧 Guest Track (Ch 2)</button>
+                <div class="download-menu" id="dl-menu-${safeId}" style="display: none !important;">
+                  <button class="dl-item download-stereo-btn" data-id="${safeId}">🎵 Full Stereo WAV</button>
+                  <button class="dl-item download-left-btn" data-id="${safeId}">🎙 Host Track (Ch 1)</button>
+                  <button class="dl-item download-right-btn" data-id="${safeId}">🎧 Guest Track (Ch 2)</button>
                 </div>
               </div>
-              <button class="btn-action-danger delete-rec-btn" data-id="${rec.id}" title="Delete Recording">
+              <button class="btn-action-danger delete-rec-btn" data-id="${safeId}" title="Delete Recording">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
             </div>
@@ -336,45 +350,45 @@ document.addEventListener('DOMContentLoaded', () => {
         const drawerTr = document.createElement('tr');
         drawerTr.className = 'player-drawer-row hidden';
         drawerTr.style.display = 'none';
-        drawerTr.id = `player-drawer-${rec.id}`;
+        drawerTr.id = `player-drawer-${safeId}`;
         drawerTr.innerHTML = `
           <td colspan="7" class="drawer-container-td">
             <div class="inline-admin-player">
               <div class="inline-player-header">
                 <div class="inline-player-info">
                   <span class="player-live-badge">NOW PLAYING</span>
-                  <strong class="player-title">${rec.hostName} & ${rec.guestName} (${rec.roomId})</strong>
+                  <strong class="player-title">${safeHostName} &amp; ${safeGuestName} (${safeRoomId})</strong>
                   <span class="player-subtext">PCM WAV 16-Bit | Size: ${sizeStr} | Duration: ${durationStr}</span>
                 </div>
                 
                 <div class="channel-selector-group">
                   <span class="ch-label">Audio Track:</span>
-                  <button class="ch-btn active" data-id="${rec.id}" data-ch="0">🎵 Stereo Both</button>
-                  <button class="ch-btn" data-id="${rec.id}" data-ch="1">🎙 Host (Ch 1)</button>
-                  <button class="ch-btn" data-id="${rec.id}" data-ch="2">🎧 Guest (Ch 2)</button>
-                  <button class="close-player-btn" data-id="${rec.id}" title="Close Player">✕ Close</button>
+                  <button class="ch-btn active" data-id="${safeId}" data-ch="0">🎵 Stereo Both</button>
+                  <button class="ch-btn" data-id="${safeId}" data-ch="1">🎙 Host (Ch 1)</button>
+                  <button class="ch-btn" data-id="${safeId}" data-ch="2">🎧 Guest (Ch 2)</button>
+                  <button class="close-player-btn" data-id="${safeId}" title="Close Player">✕ Close</button>
                 </div>
               </div>
               
-              <div class="custom-player-bar" id="custom-player-bar-${rec.id}">
-                <button class="custom-play-btn" id="play-btn-${rec.id}" data-id="${rec.id}" title="Play / Pause">
+              <div class="custom-player-bar" id="custom-player-bar-${safeId}">
+                <button class="custom-play-btn" id="play-btn-${safeId}" data-id="${safeId}" title="Play / Pause">
                   <svg class="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                   <svg class="icon-pause hidden" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                 </button>
 
-                <div class="player-time-display" id="time-display-${rec.id}">
-                  <span class="current-time" id="cur-time-${rec.id}">00:00</span> / <span class="total-duration" id="dur-time-${rec.id}">${durationStr}</span>
+                <div class="player-time-display" id="time-display-${safeId}">
+                  <span class="current-time" id="cur-time-${safeId}">00:00</span> / <span class="total-duration" id="dur-time-${safeId}">${durationStr}</span>
                 </div>
 
                 <div class="progress-seeker-wrapper">
                   <div class="progress-track-bg"></div>
-                  <div class="progress-buffer-fill" id="buffer-fill-${rec.id}"></div>
-                  <div class="progress-active-fill" id="active-fill-${rec.id}"></div>
-                  <input type="range" class="custom-seek-input" id="seek-input-${rec.id}" data-id="${rec.id}" min="0" max="${rec.duration || 100}" value="0" step="0.1">
+                  <div class="progress-buffer-fill" id="buffer-fill-${safeId}"></div>
+                  <div class="progress-active-fill" id="active-fill-${safeId}"></div>
+                  <input type="range" class="custom-seek-input" id="seek-input-${safeId}" data-id="${safeId}" min="0" max="${rec.duration || 100}" value="0" step="0.1">
                 </div>
 
                 <div class="volume-control-group">
-                  <button class="custom-vol-btn" id="vol-btn-${rec.id}" data-id="${rec.id}" title="Mute / Unmute">
+                  <button class="custom-vol-btn" id="vol-btn-${safeId}" data-id="${safeId}" title="Mute / Unmute">
                     <svg class="icon-vol-on" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
                       <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
@@ -384,10 +398,10 @@ document.addEventListener('DOMContentLoaded', () => {
                       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
                     </svg>
                   </button>
-                  <input type="range" class="custom-vol-input" id="vol-input-${rec.id}" data-id="${rec.id}" min="0" max="1" value="1" step="0.05">
+                  <input type="range" class="custom-vol-input" id="vol-input-${safeId}" data-id="${safeId}" min="0" max="1" value="1" step="0.05">
                 </div>
 
-                <audio id="audio-player-${rec.id}" preload="metadata" style="display:none;"></audio>
+                <audio id="audio-player-${safeId}" preload="metadata" style="display:none;"></audio>
               </div>
             </div>
           </td>
@@ -423,14 +437,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
 
-      // Close dropdown menus when clicking elsewhere
-      document.addEventListener('click', () => {
-        document.querySelectorAll('.download-menu').forEach(m => {
-          m.style.display = 'none';
-          m.classList.remove('show');
-        });
-      });
-
       // Download Action Handlers
       document.querySelectorAll('.download-stereo-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
@@ -448,6 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         });
       });
+
       document.querySelectorAll('.download-left-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -464,6 +471,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         });
       });
+
       document.querySelectorAll('.download-right-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -501,16 +509,15 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           const recId = btn.dataset.id;
-          const ch = parseInt(btn.dataset.ch);
+          const ch = parseInt(btn.dataset.ch, 10);
 
-          // Toggle active class inside this drawer
           const drawer = document.getElementById(`player-drawer-${recId}`);
           if (drawer) {
             drawer.querySelectorAll('.ch-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
           }
 
-          playInlineRecording(recId, ch);
+          playInlineRecording(recId, ch, true);
         });
       });
 
@@ -551,6 +558,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isUserSeeking = false;
 
+    // Window-level mouseup and touchend to ensure isUserSeeking is always reset
+    window.addEventListener('mouseup', () => { isUserSeeking = false; });
+    window.addEventListener('touchend', () => { isUserSeeking = false; });
+
     function setPlayState(isPlaying) {
       if (isPlaying) {
         if (iconPlay) { iconPlay.classList.add('hidden'); iconPlay.style.display = 'none'; }
@@ -571,7 +582,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Initialize default icon states
     setPlayState(false);
     setMuteState(false);
 
@@ -585,7 +595,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Playback state updates
     audioEl.addEventListener('play', () => { setPlayState(true); });
     audioEl.addEventListener('pause', () => { setPlayState(false); });
 
@@ -676,9 +685,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function playInlineRecording(recId, channel = 0) {
+  function playInlineRecording(recId, channel = 0, preservePosition = false) {
     const targetDrawer = document.getElementById(`player-drawer-${recId}`);
-    const isTargetAlreadyOpen = targetDrawer && targetDrawer.style.display === 'table-row' && channel === 0;
+    const isTargetAlreadyOpen = targetDrawer && targetDrawer.style.display === 'table-row' && channel === 0 && !preservePosition;
 
     // 1. Close all download dropdown menus
     document.querySelectorAll('.download-menu').forEach(m => {
@@ -686,19 +695,22 @@ document.addEventListener('DOMContentLoaded', () => {
       m.classList.remove('show');
     });
 
-    // 2. Pause and hide ALL player drawers across the entire page
+    // 2. Pause and hide other player drawers across the page
     document.querySelectorAll('.player-drawer-row').forEach(row => {
-      row.style.display = 'none';
-      row.classList.add('hidden');
-      const audio = row.querySelector('audio');
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
+      if (row !== targetDrawer) {
+        row.style.display = 'none';
+        row.classList.add('hidden');
+        const audio = row.querySelector('audio');
+        if (audio) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
       }
     });
 
     // 3. Toggle behavior: If user clicked Listen/Play on an already active stereo player, close it
     if (isTargetAlreadyOpen) {
+      closeInlinePlayer(recId);
       return;
     }
 
@@ -708,7 +720,7 @@ document.addEventListener('DOMContentLoaded', () => {
       targetDrawer.classList.remove('hidden');
     }
 
-    // 5. Instant high-performance audio streaming
+    // 5. Audio streaming setup
     const audioEl = document.getElementById(`audio-player-${recId}`);
     const seekInput = document.getElementById(`seek-input-${recId}`);
     const activeFill = document.getElementById(`active-fill-${recId}`);
@@ -716,18 +728,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const curTimeEl = document.getElementById(`cur-time-${recId}`);
 
     if (audioEl) {
+      const savedPosition = preservePosition ? (audioEl.currentTime || 0) : 0;
+
       let mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/file?token=${encodeURIComponent(controller.token)}`;
       if (channel === 1 || channel === 2) {
         mediaUrl = `${controller.baseUrl}/api/admin/recordings/${recId}/channel/${channel}?token=${encodeURIComponent(controller.token)}`;
       }
 
       audioEl.src = mediaUrl;
-      if (seekInput) seekInput.value = 0;
-      if (activeFill) activeFill.style.width = '0%';
-      if (bufferFill) bufferFill.style.width = '0%';
-      if (curTimeEl) curTimeEl.textContent = '00:00';
+      if (!preservePosition) {
+        if (seekInput) seekInput.value = 0;
+        if (activeFill) activeFill.style.width = '0%';
+        if (bufferFill) bufferFill.style.width = '0%';
+        if (curTimeEl) curTimeEl.textContent = '00:00';
+      }
 
       audioEl.load();
+
+      if (preservePosition && savedPosition > 0) {
+        const onLoaded = () => {
+          audioEl.currentTime = savedPosition;
+          audioEl.removeEventListener('loadedmetadata', onLoaded);
+        };
+        audioEl.addEventListener('loadedmetadata', onLoaded);
+      }
+
       audioEl.play().catch(err => console.error('[Inline Audio Play Error]', err));
     }
   }
@@ -748,13 +773,20 @@ document.addEventListener('DOMContentLoaded', () => {
   async function deleteRecording(id) {
     if (!confirm('Are you sure you want to permanently delete this WAV call recording?')) return;
 
-    // Optimistically remove table row and player drawer from UI instantaneously
+    // Pause audio first to prevent ghost audio
+    const drawerRow = document.getElementById(`player-drawer-${id}`);
+    if (drawerRow) {
+      const audio = drawerRow.querySelector('audio');
+      if (audio) {
+        audio.pause();
+        audio.src = '';
+      }
+      drawerRow.remove();
+    }
+
     const targetBtn = document.querySelector(`.delete-rec-btn[data-id="${id}"]`);
     const itemRow = targetBtn ? targetBtn.closest('tr') : null;
-    const drawerRow = document.getElementById(`player-drawer-${id}`);
-
     if (itemRow) itemRow.remove();
-    if (drawerRow) drawerRow.remove();
 
     try {
       const res = await controller.deleteRecording(id);

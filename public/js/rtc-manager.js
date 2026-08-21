@@ -14,6 +14,7 @@ class RTCManager {
     this.isHost = false;
     this.targetSocketId = null;
     this.iceCandidateQueue = [];
+    this._hasNotifiedRemoteTrack = false;
 
     // Callbacks
     this.onRemoteStreamAdded = options.onRemoteStreamAdded || null;
@@ -22,7 +23,7 @@ class RTCManager {
     this.onCallEnded = options.onCallEnded || null;
     this.onConnectionStateChange = options.onConnectionStateChange || null;
 
-    // Standard Google STUN configuration (2 servers to prevent discovery lag)
+    // Standard Google STUN configuration
     this.rtcConfig = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -38,6 +39,7 @@ class RTCManager {
     this.username = username;
     this.roomId = roomId;
     this.isHost = isHost;
+    this._hasNotifiedRemoteTrack = false;
 
     // 1. Get Local Microphone Audio Stream
     try {
@@ -78,9 +80,9 @@ class RTCManager {
       this.targetSocketId = socketId;
       if (this.onUserJoined) this.onUserJoined({ socketId, username, isHost });
 
-      // Host (or first peer) initiates the WebRTC offer when a second user connects
-      if (this.isHost) {
-        await this._createPeerConnection(socketId);
+      // The existing occupant in the room initiates the WebRTC offer to guarantee connection
+      await this._createPeerConnection(socketId);
+      try {
         const offer = await this.peerConnection.createOffer({
           offerToReceiveAudio: true
         });
@@ -92,6 +94,8 @@ class RTCManager {
           offer: offer,
           callerName: this.username
         });
+      } catch (e) {
+        console.error('[RTC] Failed to create offer:', e);
       }
     });
 
@@ -103,18 +107,22 @@ class RTCManager {
         this.targetSocketId = peer.socketId;
         if (this.onUserJoined) this.onUserJoined(peer);
 
-        // If I am host or peer is host, initiate offer to connect
+        // If I am marked host or designated first, initiate offer
         if (!this.peerConnection) {
           await this._createPeerConnection(peer.socketId);
           if (this.isHost) {
-            const offer = await this.peerConnection.createOffer({ offerToReceiveAudio: true });
-            offer.sdp = this._optimizeOpusSDP(offer.sdp);
-            await this.peerConnection.setLocalDescription(offer);
-            this.socket.emit('signal-offer', {
-              targetSocketId: peer.socketId,
-              offer: offer,
-              callerName: this.username
-            });
+            try {
+              const offer = await this.peerConnection.createOffer({ offerToReceiveAudio: true });
+              offer.sdp = this._optimizeOpusSDP(offer.sdp);
+              await this.peerConnection.setLocalDescription(offer);
+              this.socket.emit('signal-offer', {
+                targetSocketId: peer.socketId,
+                offer: offer,
+                callerName: this.username
+              });
+            } catch (e) {
+              console.error('[RTC] Failed to create offer on room-users:', e);
+            }
           }
         }
       }
@@ -125,24 +133,32 @@ class RTCManager {
       this.targetSocketId = senderSocketId;
       
       await this._createPeerConnection(senderSocketId);
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      await this._flushIceCandidateQueue();
+      try {
+        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        await this._flushIceCandidateQueue();
 
-      const answer = await this.peerConnection.createAnswer();
-      answer.sdp = this._optimizeOpusSDP(answer.sdp);
-      await this.peerConnection.setLocalDescription(answer);
+        const answer = await this.peerConnection.createAnswer();
+        answer.sdp = this._optimizeOpusSDP(answer.sdp);
+        await this.peerConnection.setLocalDescription(answer);
 
-      this.socket.emit('signal-answer', {
-        targetSocketId: senderSocketId,
-        answer: answer
-      });
+        this.socket.emit('signal-answer', {
+          targetSocketId: senderSocketId,
+          answer: answer
+        });
+      } catch (err) {
+        console.error('[RTC] Error answering offer:', err);
+      }
     });
 
     this.socket.on('signal-answer', async ({ senderSocketId, answer }) => {
       console.log(`[RTC] Received answer from ${senderSocketId}`);
       if (this.peerConnection) {
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        await this._flushIceCandidateQueue();
+        try {
+          await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          await this._flushIceCandidateQueue();
+        } catch (err) {
+          console.error('[RTC] Error setting remote description for answer:', err);
+        }
       }
     });
 
@@ -152,10 +168,9 @@ class RTCManager {
           try {
             await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (err) {
-            console.error('Error adding ICE candidate:', err);
+            console.error('[RTC] Error adding ICE candidate:', err);
           }
         } else {
-          console.log('[RTC] Remote description not set yet. Queuing ICE candidate.');
           this.iceCandidateQueue.push(candidate);
         }
       }
@@ -163,11 +178,13 @@ class RTCManager {
 
     this.socket.on('user-disconnected', ({ socketId, username }) => {
       console.log(`[RTC] Peer disconnected: ${username}`);
+      this._hasNotifiedRemoteTrack = false;
       if (this.onUserLeft) this.onUserLeft({ socketId, username, isExplicitHangup: false });
     });
 
     this.socket.on('call-ended-by-peer', ({ socketId, username }) => {
       console.log(`[RTC] Peer ended call explicitly: ${username}`);
+      this._hasNotifiedRemoteTrack = false;
       this._closePeerConnection();
       if (this.onCallEnded) this.onCallEnded({ socketId, username, isExplicitHangup: true });
     });
@@ -181,10 +198,12 @@ class RTCManager {
       console.log(`[RTC] Flushing ${this.iceCandidateQueue.length} queued ICE candidates...`);
       while (this.iceCandidateQueue.length > 0) {
         const candidate = this.iceCandidateQueue.shift();
-        try {
-          await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          console.error('Error adding queued ICE candidate:', err);
+        if (candidate) {
+          try {
+            await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (err) {
+            console.error('[RTC] Error adding queued ICE candidate:', err);
+          }
         }
       }
     }
@@ -198,6 +217,7 @@ class RTCManager {
 
     this.peerConnection = new RTCPeerConnection(this.rtcConfig);
     this.remoteStream = new MediaStream();
+    this._hasNotifiedRemoteTrack = false;
 
     // Add local mic tracks to peer connection
     if (this.localStream) {
@@ -206,7 +226,7 @@ class RTCManager {
       });
     }
 
-    // Handle incoming remote audio tracks
+    // Handle incoming remote audio tracks with deduplication
     this.peerConnection.ontrack = (event) => {
       console.log('[RTC] Remote track received:', event.track.kind);
       if (event.streams && event.streams[0]) {
@@ -215,13 +235,14 @@ class RTCManager {
             this.remoteStream.addTrack(track);
           }
         });
-      } else {
+      } else if (event.track) {
         if (!this.remoteStream.getTracks().some(t => t.id === event.track.id)) {
           this.remoteStream.addTrack(event.track);
         }
       }
 
-      if (this.onRemoteStreamAdded) {
+      if (this.onRemoteStreamAdded && !this._hasNotifiedRemoteTrack) {
+        this._hasNotifiedRemoteTrack = true;
         this.onRemoteStreamAdded(this.remoteStream);
       }
     };
@@ -237,13 +258,27 @@ class RTCManager {
     };
 
     // Connection state monitor & auto-reconnect recovery
-    this.peerConnection.onconnectionstatechange = () => {
-      console.log('[RTC] Connection State:', this.peerConnection ? this.peerConnection.connectionState : 'closed');
+    this.peerConnection.onconnectionstatechange = async () => {
       if (this.peerConnection) {
         const state = this.peerConnection.connectionState;
+        console.log('[RTC] Connection State:', state);
         if (state === 'failed') {
-          console.warn('[RTC] Connection failed. Restarting ICE...');
-          this.peerConnection.restartIce();
+          console.warn('[RTC] Connection failed. Initiating ICE restart...');
+          try {
+            this.peerConnection.restartIce();
+            const offer = await this.peerConnection.createOffer({ iceRestart: true });
+            offer.sdp = this._optimizeOpusSDP(offer.sdp);
+            await this.peerConnection.setLocalDescription(offer);
+            if (this.socket && targetSocketId) {
+              this.socket.emit('signal-offer', {
+                targetSocketId: targetSocketId,
+                offer: offer,
+                callerName: this.username
+              });
+            }
+          } catch (restartErr) {
+            console.error('[RTC] Error during ICE restart:', restartErr);
+          }
         }
         if (this.onConnectionStateChange) {
           this.onConnectionStateChange(state);
@@ -254,10 +289,6 @@ class RTCManager {
     this.peerConnection.oniceconnectionstatechange = () => {
       if (this.peerConnection) {
         console.log('[RTC] ICE Connection State:', this.peerConnection.iceConnectionState);
-        if (this.peerConnection.iceConnectionState === 'failed') {
-          console.warn('[RTC] ICE failed. Restarting ICE candidates...');
-          this.peerConnection.restartIce();
-        }
       }
     };
   }
@@ -285,8 +316,12 @@ class RTCManager {
    */
   leaveCall() {
     if (this.socket) {
-      this.socket.emit('end-call');
-      this.socket.disconnect();
+      try {
+        this.socket.emit('end-call');
+        this.socket.disconnect();
+        this.socket.removeAllListeners();
+      } catch (e) {}
+      this.socket = null;
     }
     this._closePeerConnection();
 
@@ -298,12 +333,13 @@ class RTCManager {
 
   _closePeerConnection() {
     this.iceCandidateQueue = [];
+    this._hasNotifiedRemoteTrack = false;
     if (this.peerConnection) {
       this.peerConnection.onicecandidate = null;
       this.peerConnection.ontrack = null;
       this.peerConnection.onconnectionstatechange = null;
       this.peerConnection.oniceconnectionstatechange = null;
-      this.peerConnection.close();
+      try { this.peerConnection.close(); } catch (e) {}
       this.peerConnection = null;
     }
     if (this.remoteStream) {
